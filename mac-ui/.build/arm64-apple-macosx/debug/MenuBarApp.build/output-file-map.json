@@ -1,0 +1,33 @@
+{
+  "": {
+    "swift-dependencies": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/master.swiftdeps"
+  },
+  "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/APIClient.swift": {
+    "dependencies": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/APIClient.d",
+    "object": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/APIClient.swift.o",
+    "swiftmodule": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/APIClient~partial.swiftmodule",
+    "swift-dependencies": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/APIClient.swiftdeps",
+    "diagnostics": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/APIClient.dia"
+  },
+  "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/ChatView.swift": {
+    "dependencies": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/ChatView.d",
+    "object": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/ChatView.swift.o",
+    "swiftmodule": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/ChatView~partial.swiftmodule",
+    "swift-dependencies": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/ChatView.swiftdeps",
+    "diagnostics": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/ChatView.dia"
+  },
+  "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/MenuBarApp.swift": {
+    "dependencies": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/MenuBarApp.d",
+    "object": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/MenuBarApp.swift.o",
+    "swiftmodule": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/MenuBarApp~partial.swiftmodule",
+    "swift-dependencies": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/MenuBarApp.swiftdeps",
+    "diagnostics": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/MenuBarApp.dia"
+  },
+  "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/TaskViews.swift": {
+    "dependencies": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/TaskViews.d",
+    "object": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/TaskViews.swift.o",
+    "swiftmodule": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/TaskViews~partial.swiftmodule",
+    "swift-dependencies": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/TaskViews.swiftdeps",
+    "diagnostics": "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/TaskViews.dia"
+  }
+}

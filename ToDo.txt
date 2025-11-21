@@ -1,0 +1,7 @@
+1. Integrate with WhatsApp so that it can send a message to whomewver I ask
+2. Integrate with WhatSapp so that I can call by voice command.
+3. Integrate with Teams
+4. Integrate with Microsoft One Note
+5. Integrate with Outlook - should be able to send me reminders for meetings etc. and check and reply emails for me
+6. Integrate with Outlook - should be able to send me reminders for meetings etc. and check and reply emails for me
+7. 

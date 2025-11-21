@@ -1,0 +1,88 @@
+# AI Assistant Configuration
+
+llm:
+  primary:
+    provider: openai
+    model: gpt-4-turbo-preview
+    temperature: 0.7
+    max_tokens: 2000
+  
+  fallback:
+    provider: ollama
+    model: llama3
+    base_url: http://localhost:11434
+    temperature: 0.7
+    max_tokens: 2000
+
+network:
+  check_interval: 30  # seconds
+  timeout: 5  # seconds
+  retry_attempts: 3
+
+voice:
+  wake_word: "hey assistant"
+  porcupine_sensitivity: 0.5
+  whisper_model: base
+  tts_engine: pyttsx3
+  tts_rate: 150
+  tts_volume: 0.8
+
+ingestion:
+  email:
+    enabled: true
+    interval_minutes: 15
+    max_emails_per_scan: 50
+    action_keywords:
+      - "follow up"
+      - "due"
+      - "please check"
+      - "action required"
+      - "todo"
+      - "task"
+  
+  onenote:
+    enabled: true
+    interval_minutes: 30
+    max_pages_per_scan: 100
+
+task_extraction:
+  enabled: true
+  batch_size: 10
+  extraction_prompt_template: |
+    Extract tasks from the following content. Return a JSON array of tasks.
+    Each task must have: title, description, due_date (ISO format or null), 
+    people_involved (array), source, importance (high/medium/low), 
+    classification (do/respond/delegate/follow-up/waiting-on).
+    
+    Content:
+    {content}
+
+actions:
+  reminders:
+    enabled: true
+    app: Reminders
+  
+  calendar:
+    enabled: true
+    app: Calendar
+  
+  email_drafts:
+    enabled: true
+    app: Mail
+
+scheduler:
+  email_worker_interval: 900  # 15 minutes
+  onenote_worker_interval: 1800  # 30 minutes
+  reminder_check_interval: 60  # 1 minute
+  task_extraction_interval: 300  # 5 minutes
+
+database:
+  path: ./data/assistant.db
+  backup_interval_hours: 24
+
+logging:
+  level: INFO
+  file: ./logs/assistant.log
+  max_size_mb: 10
+  backup_count: 5
+

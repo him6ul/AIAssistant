@@ -1,0 +1,320 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.MenuBarApp-arm64-apple-macosx26.0-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/sources",
+      "importPath" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/APIClient.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/ChatView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/MenuBarApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/TaskViews.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "MenuBarApp",
+      "moduleOutputPath" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/Modules/MenuBarApp.swiftmodule",
+      "objects" : [
+        "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/APIClient.swift.o",
+        "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/ChatView.swift.o",
+        "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/MenuBarApp.swift.o",
+        "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/TaskViews.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx12.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j12",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "MenuBarApp_main",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "mac_ui"
+      ],
+      "outputFileMapPath" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/APIClient.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/ChatView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/MenuBarApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/TaskViews.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/Modules/MenuBarApp.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/APIClient.swift",
+        "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/ChatView.swift",
+        "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/MenuBarApp.swift",
+        "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/TaskViews.swift"
+      ],
+      "tempsPath" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "MenuBarApp" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "MenuBarApp",
+      "-package-name",
+      "mac_ui",
+      "-c",
+      "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/APIClient.swift",
+      "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/ChatView.swift",
+      "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/MenuBarApp.swift",
+      "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/TaskViews.swift",
+      "-I",
+      "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx12.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j12",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "MenuBarApp_main",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "mac_ui",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "MenuBarApp" : [
+
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp-entitlement.plist" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<entitlement-plist>"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<com.apple.security.get-task-allow>"
+        }
+      ],
+      "outputFilePath" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp-entitlement.plist"
+    },
+    "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/APIClient.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/ChatView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/MenuBarApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/Sources/TaskViews.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/sources"
+    },
+    "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/APIClient.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/ChatView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/MenuBarApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.build/TaskViews.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/MenuBarApp.product/Objects.LinkFileList"
+    },
+    "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/himanshu/SourceCode/Personal/AI_Assistant/mac-ui/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}
