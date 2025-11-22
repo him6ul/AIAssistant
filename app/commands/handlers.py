@@ -65,7 +65,24 @@ class WeatherHandler:
         # Extract location if mentioned
         location = self._extract_location(text)
         if not location:
-            location = os.getenv("DEFAULT_LOCATION", "San Francisco")
+            # Try to get current location automatically
+            use_auto_location = os.getenv("USE_AUTO_LOCATION", "true").lower() == "true"
+            if use_auto_location:
+                try:
+                    from app.utils.location import get_current_location
+                    detected_location = await get_current_location()
+                    if detected_location:
+                        location = detected_location
+                        logger.info(f"Using auto-detected location: {location}")
+                    else:
+                        # Fall back to DEFAULT_LOCATION
+                        location = os.getenv("DEFAULT_LOCATION", "San Francisco")
+                        logger.info(f"Auto-location failed, using DEFAULT_LOCATION: {location}")
+                except Exception as e:
+                    logger.warning(f"Auto-location detection failed: {e}, using DEFAULT_LOCATION")
+                    location = os.getenv("DEFAULT_LOCATION", "San Francisco")
+            else:
+                location = os.getenv("DEFAULT_LOCATION", "San Francisco")
         
         if not self.api_key:
             return CommandResponse(

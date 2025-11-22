@@ -106,3 +106,43 @@ If you don't want to set up an API key right now, the assistant will respond wit
 
 But it will still handle the command (just won't fetch actual weather data).
 
+
+## Automatic Location Detection
+
+The assistant can now automatically detect your current location using IP geolocation!
+
+### How It Works
+
+1. **Automatic Detection**: When you ask "What is the weather?" without specifying a location, the assistant will:
+   - Try to detect your current location using your IP address
+   - Use that location for weather queries
+   - Cache the location to avoid repeated API calls
+
+2. **Configuration**: Add to your `.env` file:
+   ```env
+   USE_AUTO_LOCATION=true
+   ```
+
+3. **Fallback**: If auto-detection fails, it falls back to `DEFAULT_LOCATION`
+
+### Location Detection Services
+
+The system tries multiple free IP geolocation services:
+- **ip-api.com** (free, no API key needed)
+- **ipinfo.io** (free tier available)
+- **ipapi.co** (free tier available)
+
+### Optional: Better Rate Limits
+
+For better rate limits, you can add API keys (optional):
+```env
+IPINFO_TOKEN=your_token_here  # Get from https://ipinfo.io
+IPAPI_KEY=your_key_here       # Get from https://ipapi.co
+```
+
+### Disable Auto-Location
+
+To always use `DEFAULT_LOCATION`:
+```env
+USE_AUTO_LOCATION=false
+```

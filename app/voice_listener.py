@@ -180,18 +180,36 @@ class VoiceListener:
             
             logger.info(f"Transcribed: {text}")
             
-            # Check for stop command first
+            # Check for stop command first (before any other processing)
             text_lower = text.lower().strip()
             stop_keywords = get_stop_words()
             
-            if any(keyword in text_lower for keyword in stop_keywords):
-                logger.info("Stop command detected - shutting down voice listener")
+            # Check for stop keywords more aggressively
+            is_stop_command = any(keyword in text_lower for keyword in stop_keywords)
+            
+            if is_stop_command:
+                logger.info(f"Stop command detected in: '{text}' - shutting down voice listener")
+                logger.info(f"Matched stop keywords: {[kw for kw in stop_keywords if kw in text_lower]}")
+                
+                # Set listening flag to False immediately to stop the loop
+                self._listening = False
+                logger.info("Set _listening flag to False")
+                
+                # Get user name from environment or use default
+                user_name = os.getenv("USER_NAME", "Himanshu")
+                goodbye_message = f"Goodbye {user_name}"
+                
                 # Run TTS in executor to avoid blocking async event loop
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self.tts_engine.speak, "Stopping voice listener. Goodbye!")
-                # Stop the listener and clean up
-                await asyncio.sleep(0.5)  # Brief pause to finish speaking
+                await loop.run_in_executor(None, self.tts_engine.speak, goodbye_message)
+                
+                # Brief pause to finish speaking
+                await asyncio.sleep(0.5)
+                
+                # Stop the listener and clean up resources
+                logger.info("Calling stop() method to clean up resources...")
                 self.stop()
+                logger.info("Voice listener stop() completed - exiting")
                 return
             
             # First, repeat the command back to confirm understanding
@@ -212,14 +230,11 @@ class VoiceListener:
             )
             
             content = response.get("content", "")
-            mode = response.get("mode", "")
-            
-            # Speak response
-            full_response = f"{content} [{mode}]" if mode else content
-            logger.info(f"Speaking response: {full_response[:100]}...")
+            # Don't include mode/engine info in spoken response - just speak the content
+            logger.info(f"Speaking response: {content[:100]}...")
             # Run TTS in executor to avoid blocking async event loop
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.tts_engine.speak, full_response)
+            await loop.run_in_executor(None, self.tts_engine.speak, content)
             
             # Call callback if provided
             if self.callback:
@@ -252,6 +267,10 @@ class VoiceListener:
         # Simple wake word detection loop
         # In production, you'd use Porcupine's detection
         while self._listening:
+            # Check if we should stop before processing
+            if not self._listening:
+                logger.info("Voice listener stopping (flag set)")
+                break
             try:
                 if self.porcupine:
                     # Read audio frame
@@ -293,19 +312,35 @@ class VoiceListener:
         """
         Stop voice listener.
         """
+        logger.info("Stopping voice listener...")
         self._listening = False
         
-        if self.audio_stream:
-            self.audio_stream.stop_stream()
-            self.audio_stream.close()
+        try:
+            if self.audio_stream:
+                logger.debug("Stopping audio stream...")
+                self.audio_stream.stop_stream()
+                self.audio_stream.close()
+                self.audio_stream = None
+        except Exception as e:
+            logger.warning(f"Error stopping audio stream: {e}")
         
-        if self.pyaudio_instance:
-            self.pyaudio_instance.terminate()
+        try:
+            if self.pyaudio_instance:
+                logger.debug("Terminating PyAudio...")
+                self.pyaudio_instance.terminate()
+                self.pyaudio_instance = None
+        except Exception as e:
+            logger.warning(f"Error terminating PyAudio: {e}")
         
-        if self.porcupine:
-            self.porcupine.delete()
+        try:
+            if self.porcupine:
+                logger.debug("Deleting Porcupine...")
+                self.porcupine.delete()
+                self.porcupine = None
+        except Exception as e:
+            logger.warning(f"Error deleting Porcupine: {e}")
         
-        logger.info("Voice listener stopped")
+        logger.info("Voice listener stopped successfully")
 
 
 # Global listener instance
