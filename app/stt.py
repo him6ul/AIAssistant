@@ -101,40 +101,93 @@ class STTEngine:
         
         Args:
             audio_file_path: Path to audio file
-            language: Language code (optional, auto-detect if None)
+            language: Language code (optional, e.g., 'en', 'en-US', 'en-GB', 'hi')
+                      If None, uses STT_LANGUAGE from .env or auto-detects
         
         Returns:
             Transcribed text or None if failed
         """
+        # Get language codes from configuration (supports multiple, comma-separated)
+        # Note: OpenAI Whisper API only accepts ISO-639-1 base language codes (e.g., 'en', 'hi')
+        # Region codes (e.g., 'en-US', 'en-IN') are converted to base codes
+        def normalize_language_code(lang_code: Optional[str]) -> Optional[str]:
+            """Convert language code to ISO-639-1 format (base language only)."""
+            if not lang_code:
+                return None
+            # Extract base language code (part before hyphen)
+            # e.g., 'en-US' -> 'en', 'en-IN' -> 'en', 'hi' -> 'hi'
+            base_code = lang_code.strip().split('-')[0].split('_')[0].lower()
+            # Validate it's a 2-letter code (ISO-639-1)
+            if len(base_code) == 2:
+                return base_code
+            # If it's already a valid code, return as-is
+            return base_code if base_code else None
+        
+        language_codes = None
+        if language is None:
+            stt_language = os.getenv("STT_LANGUAGE", None)
+            if stt_language:
+                # Support comma-separated language codes for multiple accents
+                raw_codes = [lang.strip() for lang in stt_language.split(",") if lang.strip()]
+                # Normalize to ISO-639-1 format (base language codes)
+                language_codes = [normalize_language_code(code) for code in raw_codes if normalize_language_code(code)]
+                if language_codes:
+                    language = language_codes[0]  # Use first as primary
+                    if len(language_codes) > 1:
+                        logger.debug(f"Using primary language: {language}, fallbacks: {language_codes[1:]}")
+                    else:
+                        logger.debug(f"Using configured language: {language}")
+                else:
+                    logger.warning(f"No valid language codes found in STT_LANGUAGE: {stt_language}")
+        
         # Try OpenAI API first if available and enabled
         if self.use_openai_api and self.openai_client:
             is_online = await self.network_monitor.is_online()
             if is_online:
-                try:
-                    with open(audio_file_path, "rb") as audio_file:
-                        # Use deployment name for Azure, model name for standard OpenAI
-                        if self.use_azure:
-                            model_name = os.getenv("AZURE_OPENAI_WHISPER_DEPLOYMENT", "whisper-1")
-                        else:
-                            model_name = "whisper-1"
-                        transcript = self.openai_client.audio.transcriptions.create(
-                            model=model_name,
-                            file=audio_file,
-                            language=language
-                        )
-                    provider = "Azure OpenAI API" if self.use_azure else "OpenAI API"
-                    logger.info(f"Transcription successful ({provider})")
-                    return transcript.text
-                except Exception as e:
-                    error_msg = str(e)
-                    # Check for invalid API key errors
-                    if "401" in error_msg or "invalid_api_key" in error_msg.lower() or "Incorrect API key" in error_msg:
-                        logger.warning(f"OpenAI Whisper API key is invalid. Disabling OpenAI API and using local Whisper only.")
-                        # Disable OpenAI API for future requests if key is invalid
-                        self.use_openai_api = False
-                        self.openai_client = None
-                    else:
-                        logger.warning(f"OpenAI Whisper API failed: {e}, falling back to local")
+                # Try each language code in order if multiple are specified
+                languages_to_try = language_codes if language_codes else [language] if language else [None]
+                last_error = None
+                
+                for lang_to_try in languages_to_try:
+                    try:
+                        with open(audio_file_path, "rb") as audio_file:
+                            # Use deployment name for Azure, model name for standard OpenAI
+                            if self.use_azure:
+                                model_name = os.getenv("AZURE_OPENAI_WHISPER_DEPLOYMENT", "whisper-1")
+                            else:
+                                model_name = "whisper-1"
+                            
+                            transcript_params = {
+                                "model": model_name,
+                                "file": audio_file
+                            }
+                            if lang_to_try:
+                                transcript_params["language"] = lang_to_try
+                            
+                            transcript = self.openai_client.audio.transcriptions.create(**transcript_params)
+                        
+                        provider = "Azure OpenAI API" if self.use_azure else "OpenAI API"
+                        lang_info = f" (language: {lang_to_try})" if lang_to_try else " (auto-detect)"
+                        logger.info(f"Transcription successful ({provider}{lang_info})")
+                        return transcript.text
+                    except Exception as e:
+                        last_error = e
+                        # If this isn't the last language to try, continue to next
+                        if lang_to_try != languages_to_try[-1]:
+                            logger.debug(f"Transcription with {lang_to_try} failed, trying next language: {e}")
+                            continue
+                        # If this is the last language or only one, use the error
+                
+                # If we get here, all languages failed
+                error_msg = str(last_error) if last_error else "Unknown error"
+                # Check for invalid API key errors
+                if "401" in error_msg or "invalid_api_key" in error_msg.lower() or "Incorrect API key" in error_msg:
+                    logger.warning(f"OpenAI Whisper API key is invalid. Disabling OpenAI API and using local Whisper only.")
+                    # Disable OpenAI API for future requests if key is invalid
+                    self.use_openai_api = False
+                    self.openai_client = None
+                else:
+                    logger.warning(f"OpenAI Whisper API failed with all languages: {error_msg}, falling back to local")
         
         # Fallback to local Whisper
         if self.local_model:
@@ -163,7 +216,8 @@ class STTEngine:
         
         Args:
             audio_bytes: Raw PCM audio data as bytes
-            language: Language code (optional)
+            language: Language code (optional, e.g., 'en', 'en-US', 'en-GB', 'hi', 'es')
+                      If None, uses STT_LANGUAGE from .env or auto-detects
             sample_rate: Audio sample rate (default: 16000)
             channels: Number of audio channels (default: 1 for mono)
             sample_width: Sample width in bytes (default: 2 for 16-bit)
@@ -171,6 +225,9 @@ class STTEngine:
         Returns:
             Transcribed text or None if failed
         """
+        # Note: language parsing and fallback is handled in transcribe() method
+        # We pass language=None here to let transcribe() handle STT_LANGUAGE parsing
+        # This ensures the fallback mechanism works correctly
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
             try:
                 # Create proper WAV file with headers
@@ -180,6 +237,7 @@ class STTEngine:
                     wav_file.setframerate(sample_rate)
                     wav_file.writeframes(audio_bytes)
                 
+                # Pass language=None to let transcribe() handle STT_LANGUAGE parsing and fallback
                 return await self.transcribe(tmp_file.name, language)
             finally:
                 if os.path.exists(tmp_file.name):

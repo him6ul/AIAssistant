@@ -4,6 +4,8 @@ Uses pyttsx3 for local TTS on macOS.
 """
 
 import pyttsx3
+import threading
+import time
 from typing import Optional
 from app.utils.logger import get_logger
 
@@ -22,6 +24,8 @@ class TTSEngine:
         voice_id: Optional[str] = None,
         prefer_male: bool = True
     ):
+        # Lock to ensure only one TTS call at a time
+        self._speak_lock = threading.Lock()
         """
         Initialize TTS engine.
         
@@ -108,6 +112,7 @@ class TTSEngine:
     def speak(self, text: str, wait: bool = True) -> bool:
         """
         Speak the given text.
+        Uses a lock to ensure only one TTS call happens at a time.
         
         Args:
             text: Text to speak
@@ -120,17 +125,31 @@ class TTSEngine:
             logger.error("TTS engine not available")
             return False
         
-        try:
-            self.engine.say(text)
-            if wait:
-                self.engine.runAndWait()
-            else:
-                self.engine.startLoop(False)
-            logger.debug(f"Spoke: {text[:50]}...")
-            return True
-        except Exception as e:
-            logger.error(f"TTS failed: {e}")
-            return False
+        # Use lock to prevent concurrent TTS calls and ensure completion
+        with self._speak_lock:
+            try:
+                logger.info(f"Speaking: {text[:100]}...")
+                
+                # Create a new engine instance for thread safety
+                # pyttsx3 can have issues when used across threads
+                thread_engine = pyttsx3.init()
+                thread_engine.setProperty('rate', self.engine.getProperty('rate'))
+                thread_engine.setProperty('volume', self.engine.getProperty('volume'))
+                thread_engine.setProperty('voice', self.engine.getProperty('voice'))
+                
+                # Speak the text
+                thread_engine.say(text)
+                if wait:
+                    # runAndWait() blocks until speech completes
+                    thread_engine.runAndWait()
+                else:
+                    thread_engine.startLoop(False)
+                
+                logger.info(f"Finished speaking: {text[:50]}...")
+                return True
+            except Exception as e:
+                logger.error(f"TTS failed: {e}", exc_info=True)
+                return False
     
     def save_to_file(self, text: str, filename: str) -> bool:
         """

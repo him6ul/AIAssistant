@@ -186,7 +186,9 @@ class VoiceListener:
             
             if any(keyword in text_lower for keyword in stop_keywords):
                 logger.info("Stop command detected - shutting down voice listener")
-                self.tts_engine.speak("Stopping voice listener. Goodbye!")
+                # Run TTS in executor to avoid blocking async event loop
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self.tts_engine.speak, "Stopping voice listener. Goodbye!")
                 # Stop the listener and clean up
                 await asyncio.sleep(0.5)  # Brief pause to finish speaking
                 self.stop()
@@ -195,7 +197,10 @@ class VoiceListener:
             # First, repeat the command back to confirm understanding
             confirmation = f"I heard: {text}. Let me help you with that."
             logger.info(f"Confirming command: {confirmation}")
-            self.tts_engine.speak(confirmation)
+            # Run TTS in executor to avoid blocking async event loop
+            import asyncio
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.tts_engine.speak, confirmation)
             
             # Brief pause after confirmation
             await asyncio.sleep(0.3)
@@ -211,15 +216,20 @@ class VoiceListener:
             
             # Speak response
             full_response = f"{content} [{mode}]" if mode else content
-            self.tts_engine.speak(full_response)
+            logger.info(f"Speaking response: {full_response[:100]}...")
+            # Run TTS in executor to avoid blocking async event loop
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.tts_engine.speak, full_response)
             
             # Call callback if provided
             if self.callback:
                 await self.callback(text, content, response)
         
         except Exception as e:
-            logger.error(f"Voice command processing failed: {e}")
-            self.tts_engine.speak("I'm sorry, I encountered an error processing your request.")
+            logger.error(f"Voice command processing failed: {e}", exc_info=True)
+            # Run TTS in executor to avoid blocking async event loop
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.tts_engine.speak, "I'm sorry, I encountered an error processing your request.")
     
     async def start(self):
         """
