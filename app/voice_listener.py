@@ -3,16 +3,52 @@ Voice listener with wake word detection and continuous listening.
 """
 
 import asyncio
+import os
 import pyaudio
 import struct
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 from pvporcupine import create as create_porcupine, KEYWORDS
+from dotenv import load_dotenv
 from app.stt import get_stt_engine
 from app.llm_router import get_llm_router
 from app.tts import get_tts_engine
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Load environment variables
+load_dotenv(override=True)
+
+
+def get_stop_words() -> List[str]:
+    """
+    Get stop words from environment variable or return defaults.
+    Same function as in handlers.py to ensure consistency.
+    
+    Returns:
+        List of stop words/phrases
+    """
+    stop_words_env = os.getenv("STOP_WORDS", "").strip()
+    if stop_words_env:
+        # Split by comma and clean up
+        stop_words = [word.strip().lower() for word in stop_words_env.split(",") if word.strip()]
+        if stop_words:
+            logger.debug(f"Using stop words from .env: {stop_words}")
+            return stop_words
+    
+    # Default stop words if not configured
+    default_stop_words = [
+        "stop",
+        "stop listening",
+        "stop the assistant",
+        "stop jarvis",
+        "jarvis stop",
+        "shut down",
+        "exit",
+        "quit"
+    ]
+    logger.debug(f"Using default stop words: {default_stop_words}")
+    return default_stop_words
 
 
 class VoiceListener:
@@ -44,6 +80,9 @@ class VoiceListener:
         self.porcupine: Optional[Porcupine] = None
         self.audio_stream: Optional[pyaudio.PyAudio.Stream] = None
         self.pyaudio_instance: Optional[pyaudio.PyAudio] = None
+        self.sample_rate: int = 16000
+        self.channels: int = 1
+        self.sample_width: int = 2  # 16-bit = 2 bytes
         
         self.stt_engine = get_stt_engine()
         self.llm_router = get_llm_router()
@@ -101,18 +140,18 @@ class VoiceListener:
         try:
             self.pyaudio_instance = pyaudio.PyAudio()
             
-            sample_rate = self.porcupine.sample_rate if self.porcupine else 16000
+            self.sample_rate = self.porcupine.sample_rate if self.porcupine else 16000
             frame_length = self.porcupine.frame_length if self.porcupine else 512
             
             self.audio_stream = self.pyaudio_instance.open(
-                rate=sample_rate,
-                channels=1,
+                rate=self.sample_rate,
+                channels=self.channels,
                 format=pyaudio.paInt16,
                 input=True,
                 frames_per_buffer=frame_length
             )
             
-            logger.info("Audio stream initialized")
+            logger.info(f"Audio stream initialized (rate={self.sample_rate}Hz, channels={self.channels}, width={self.sample_width} bytes)")
         except Exception as e:
             logger.error(f"Failed to initialize audio: {e}")
             self.audio_stream = None
@@ -127,8 +166,13 @@ class VoiceListener:
         logger.info("Processing voice command")
         
         try:
-            # Transcribe audio
-            text = await self.stt_engine.transcribe_bytes(audio_data)
+            # Transcribe audio with proper format parameters
+            text = await self.stt_engine.transcribe_bytes(
+                audio_data,
+                sample_rate=self.sample_rate,
+                channels=self.channels,
+                sample_width=self.sample_width
+            )
             
             if not text:
                 logger.warning("No transcription result")
@@ -138,7 +182,8 @@ class VoiceListener:
             
             # Check for stop command first
             text_lower = text.lower().strip()
-            stop_keywords = ["stop", "stop listening", "stop the assistant", "shut down", "exit", "quit"]
+            stop_keywords = get_stop_words()
+            
             if any(keyword in text_lower for keyword in stop_keywords):
                 logger.info("Stop command detected - shutting down voice listener")
                 self.tts_engine.speak("Stopping voice listener. Goodbye!")

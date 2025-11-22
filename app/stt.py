@@ -6,6 +6,8 @@ Supports both local Whisper.cpp and OpenAI Whisper API.
 import os
 import subprocess
 import tempfile
+import wave
+import struct
 from typing import Optional
 
 # Try to import whisper, but make it optional
@@ -150,26 +152,38 @@ class STTEngine:
     async def transcribe_bytes(
         self,
         audio_bytes: bytes,
-        language: Optional[str] = None
+        language: Optional[str] = None,
+        sample_rate: int = 16000,
+        channels: int = 1,
+        sample_width: int = 2
     ) -> Optional[str]:
         """
         Transcribe audio bytes to text.
-        Creates a temporary file for processing.
+        Creates a temporary WAV file with proper headers for processing.
         
         Args:
-            audio_bytes: Audio data as bytes
+            audio_bytes: Raw PCM audio data as bytes
             language: Language code (optional)
+            sample_rate: Audio sample rate (default: 16000)
+            channels: Number of audio channels (default: 1 for mono)
+            sample_width: Sample width in bytes (default: 2 for 16-bit)
         
         Returns:
             Transcribed text or None if failed
         """
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
             try:
-                tmp_file.write(audio_bytes)
-                tmp_file.flush()
+                # Create proper WAV file with headers
+                with wave.open(tmp_file.name, 'wb') as wav_file:
+                    wav_file.setnchannels(channels)
+                    wav_file.setsampwidth(sample_width)
+                    wav_file.setframerate(sample_rate)
+                    wav_file.writeframes(audio_bytes)
+                
                 return await self.transcribe(tmp_file.name, language)
             finally:
-                os.unlink(tmp_file.name)
+                if os.path.exists(tmp_file.name):
+                    os.unlink(tmp_file.name)
 
 
 # Global STT instance

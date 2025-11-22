@@ -4,13 +4,47 @@ Individual command handlers.
 
 import re
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import httpx
 import os
+from dotenv import load_dotenv
 from app.commands.types import CommandType, CommandResponse
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Load environment variables
+load_dotenv(override=True)
+
+
+def get_stop_words() -> List[str]:
+    """
+    Get stop words from environment variable or return defaults.
+    
+    Returns:
+        List of stop words/phrases
+    """
+    stop_words_env = os.getenv("STOP_WORDS", "").strip()
+    if stop_words_env:
+        # Split by comma and clean up
+        stop_words = [word.strip().lower() for word in stop_words_env.split(",") if word.strip()]
+        if stop_words:
+            logger.info(f"Using stop words from .env: {stop_words}")
+            return stop_words
+    
+    # Default stop words if not configured
+    default_stop_words = [
+        "stop",
+        "stop listening",
+        "stop the assistant",
+        "stop jarvis",
+        "jarvis stop",
+        "shut down",
+        "exit",
+        "quit"
+    ]
+    logger.debug(f"Using default stop words: {default_stop_words}")
+    return default_stop_words
 
 
 class WeatherHandler:
@@ -165,11 +199,14 @@ class DateHandler:
 class StopHandler:
     """Handler for stop commands."""
     
+    def __init__(self):
+        """Initialize stop handler with stop words from environment."""
+        self.stop_keywords = get_stop_words()
+    
     def can_handle(self, text: str) -> bool:
         """Check if this handler can process the command."""
         text_lower = text.lower().strip()
-        stop_keywords = ["stop", "stop listening", "stop the assistant", "shut down", "exit", "quit"]
-        return any(keyword in text_lower for keyword in stop_keywords)
+        return any(keyword in text_lower for keyword in self.stop_keywords)
     
     async def handle(self, text: str) -> CommandResponse:
         """Handle stop command."""
