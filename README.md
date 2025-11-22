@@ -17,7 +17,7 @@ A complete Mac-local AI Personal Assistant with hybrid LLM support (OpenAI + Oll
 ## Architecture
 
 ```
-personal-mac-ai-assistant/
+AI_Assistant/
 ├── app/                    # Python backend
 │   ├── main.py            # Main entry point
 │   ├── llm_router.py      # Hybrid LLM router
@@ -26,13 +26,45 @@ personal-mac-ai-assistant/
 │   ├── tts.py             # Text-to-speech
 │   ├── voice_listener.py  # Voice activation
 │   ├── scheduler/         # Background workers
+│   │   ├── email_scheduler.py
+│   │   ├── onenote_scheduler.py
+│   │   └── reminder_scheduler.py
 │   ├── ingestion/         # Data ingestion
+│   │   ├── ms_graph_client.py
+│   │   ├── onenote_ingestor.py
+│   │   ├── email_o365_ingestor.py
+│   │   ├── email_imap_ingestor.py
+│   │   └── github_client.py
 │   ├── tasks/             # Task management
+│   │   ├── extractor.py
+│   │   ├── storage.py
+│   │   └── models.py
 │   ├── actions/           # Action execution
-│   └── api/               # FastAPI server
+│   │   ├── executor.py
+│   │   └── capabilities.py
+│   ├── api/               # FastAPI server
+│   │   └── server.py
+│   └── utils/             # Utilities
+│       └── logger.py
 ├── mac-ui/                # SwiftUI menu bar app
+│   ├── Sources/           # Swift source files
+│   │   ├── MenuBarApp.swift
+│   │   ├── ChatView.swift
+│   │   ├── TaskViews.swift
+│   │   └── APIClient.swift
+│   ├── Package.swift      # Swift Package Manager config
+│   └── README.md          # Menu bar app setup guide
 ├── config/                # Configuration files
-└── scripts/               # Run scripts
+│   ├── config.yaml
+│   └── credentials.example.yaml
+├── scripts/               # Run scripts
+│   ├── run_all.sh
+│   ├── run_backend.sh
+│   ├── run_voice_listener.sh
+│   └── run_menu_bar_app.sh
+├── data/                  # SQLite database (auto-created)
+├── logs/                  # Log files (auto-created)
+└── requirements.txt       # Python dependencies
 ```
 
 ## Prerequisites
@@ -158,10 +190,23 @@ This will:
 
 ### Menu Bar App
 
-1. Open `mac-ui/MenuBarApp.xcodeproj` in Xcode
-2. Build and run the app
-3. The app will appear in your menu bar
-4. Click the icon to open the chat/task interface
+The menu bar app uses Swift Package Manager. To build and run:
+
+**Option 1: Using Swift Package Manager**
+```bash
+cd mac-ui
+swift build
+swift run
+```
+
+**Option 2: Using Xcode**
+1. Open `mac-ui/Package.swift` in Xcode (File > Open)
+2. Or create an Xcode project following `mac-ui/XCODE_SETUP.md`
+3. Build and run the app
+4. The app will appear in your menu bar
+5. Click the icon to open the chat/task interface
+
+For detailed setup instructions, see `mac-ui/README.md` and `mac-ui/QUICK_START.md`.
 
 ### API Endpoints
 
@@ -218,11 +263,26 @@ The assistant can perform:
 ### Project Structure
 
 - `app/` - Python backend code
-- `mac-ui/` - SwiftUI menu bar app
+- `mac-ui/` - SwiftUI menu bar app (source files in `Sources/` directory)
 - `config/` - Configuration files
 - `scripts/` - Run scripts
-- `data/` - SQLite database (created automatically)
-- `logs/` - Log files (created automatically)
+- `data/` - SQLite database (created automatically, ignored by git)
+- `logs/` - Log files (created automatically, ignored by git)
+
+### Documentation
+
+The project includes comprehensive documentation:
+- `README.md` - This file (main project documentation)
+- `SETUP.md` - Detailed setup and installation instructions
+- `PROJECT_SUMMARY.md` - Complete project overview and component status
+- `TESTING_GUIDE.md` - Testing instructions and test results
+- `mac-ui/README.md` - Menu bar app setup guide
+- `mac-ui/QUICK_START.md` - Quick start for the menu bar app
+- `mac-ui/XCODE_SETUP.md` - Xcode project setup instructions
+- `AUTO_START_BACKEND.md` - Auto-start backend service guide
+- `RUN_APP.md` - Application running instructions
+- `VOICE_TESTING.md` - Voice feature testing guide
+- `VOICE_TROUBLESHOOTING.md` - Voice feature troubleshooting
 
 ### Adding New Features
 
@@ -253,6 +313,12 @@ The assistant can perform:
 - Check CORS settings in server.py
 - Verify network connectivity
 
+## Recent Changes
+
+- **Project Cleanup**: Removed redundant documentation files to streamline the project structure
+- **Swift Package Structure**: Menu bar app source files are organized in `mac-ui/Sources/` directory
+- **Documentation**: Consolidated and organized all documentation files for easier navigation
+
 ## License
 
 [Your License Here]
@@ -263,5 +329,9 @@ The assistant can perform:
 
 ## Support
 
-[Support Information]
+For issues and questions:
+- Check the troubleshooting section above
+- Review the detailed guides in the documentation files
+- See `TESTING_GUIDE.md` for testing procedures
+- See `VOICE_TROUBLESHOOTING.md` for voice-related issues
 
