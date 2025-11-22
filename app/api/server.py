@@ -9,7 +9,9 @@ from typing import List, Optional
 from pydantic import BaseModel
 import uvicorn
 
-from app.llm_router import get_llm_router
+from app.llm_router import get_llm_router, reset_llm_router
+from app.stt import reset_stt_engine
+from app.voice_listener import reset_voice_listener
 from app.tasks.storage import get_task_storage
 from app.tasks.models import Task, TaskQuery, TaskStatus, TaskClassification, TaskImportance
 from app.tasks.extractor import get_task_extractor, TaskExtractionRequest
@@ -498,6 +500,26 @@ async def create_github_issue(repo_name: str, title: str, body: str = "", labels
         raise
     except Exception as e:
         logger.error(f"GitHub create issue error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/config/reload")
+async def reload_config():
+    """
+    Reload configuration from .env file.
+    This resets the LLM router, STT engine, and voice listener to pick up new settings.
+    """
+    try:
+        reset_llm_router()
+        reset_stt_engine()
+        reset_voice_listener()
+        logger.info("Configuration reloaded from .env file")
+        return {
+            "status": "success",
+            "message": "Configuration reloaded. New settings (API keys, wake word, etc.) will be used on next request."
+        }
+    except Exception as e:
+        logger.error(f"Failed to reload configuration: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

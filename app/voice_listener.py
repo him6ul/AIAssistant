@@ -257,6 +257,16 @@ class VoiceListener:
 _listener: Optional[VoiceListener] = None
 
 
+def reset_voice_listener():
+    """
+    Reset the global voice listener instance to force reload from .env.
+    Useful when .env file is updated.
+    """
+    global _listener
+    _listener = None
+    logger.info("Voice listener instance reset - will reload on next access")
+
+
 def get_voice_listener() -> VoiceListener:
     """
     Get or create the global voice listener instance.
@@ -268,10 +278,14 @@ def get_voice_listener() -> VoiceListener:
     if _listener is None:
         import os
         from dotenv import load_dotenv
-        load_dotenv()
+        # Force reload .env file to pick up latest changes
+        load_dotenv(override=True)
+        
+        wake_word = os.getenv("WAKE_WORD", "hey assistant")
+        logger.info(f"Initializing voice listener with wake word: '{wake_word}'")
         
         _listener = VoiceListener(
-            wake_word=os.getenv("WAKE_WORD", "hey assistant"),
+            wake_word=wake_word,
             porcupine_access_key=os.getenv("PORCUPINE_ACCESS_KEY"),
             sensitivity=0.5
         )

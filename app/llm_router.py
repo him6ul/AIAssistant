@@ -265,6 +265,16 @@ class HybridLLMRouter:
 _router: Optional[HybridLLMRouter] = None
 
 
+def reset_llm_router():
+    """
+    Reset the global LLM router instance to force reload from .env.
+    Useful when .env file is updated.
+    """
+    global _router
+    _router = None
+    logger.info("LLM router instance reset - will reload on next access")
+
+
 def get_llm_router() -> HybridLLMRouter:
     """
     Get or create the global LLM router instance.
@@ -276,15 +286,19 @@ def get_llm_router() -> HybridLLMRouter:
     if _router is None:
         import os
         from dotenv import load_dotenv
-        load_dotenv()
+        # Force reload .env file to pick up latest changes
+        load_dotenv(override=True)
         
         # Check if Azure OpenAI should be used
         use_azure = os.getenv("USE_AZURE_OPENAI", "false").lower() == "true"
         azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
         
+        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY")
+        logger.info(f"Initializing LLM router with API key: {api_key[:10] if api_key else 'None'}...")
+        
         _router = HybridLLMRouter(
-            openai_api_key=os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY"),
+            openai_api_key=api_key,
             openai_model=os.getenv("OPENAI_MODEL") or os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4-turbo-preview"),
             ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             ollama_model=os.getenv("OLLAMA_MODEL", "llama3"),

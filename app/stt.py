@@ -176,6 +176,16 @@ class STTEngine:
 _stt_engine: Optional[STTEngine] = None
 
 
+def reset_stt_engine():
+    """
+    Reset the global STT engine instance to force reload from .env.
+    Useful when .env file is updated.
+    """
+    global _stt_engine
+    _stt_engine = None
+    logger.info("STT engine instance reset - will reload on next access")
+
+
 def get_stt_engine() -> STTEngine:
     """
     Get or create the global STT engine instance.
@@ -187,17 +197,21 @@ def get_stt_engine() -> STTEngine:
     if _stt_engine is None:
         import os
         from dotenv import load_dotenv
-        load_dotenv()
+        # Force reload .env file to pick up latest changes
+        load_dotenv(override=True)
         
         # Check if Azure OpenAI should be used
         use_azure = os.getenv("USE_AZURE_OPENAI", "false").lower() == "true"
         azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
         
+        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY")
+        logger.info(f"Initializing STT engine with API key: {api_key[:10] if api_key else 'None'}...")
+        
         _stt_engine = STTEngine(
             model=os.getenv("WHISPER_MODEL", "base"),
             use_openai_api=True,
-            openai_api_key=os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY"),
+            openai_api_key=api_key,
             use_azure=use_azure,
             azure_endpoint=azure_endpoint,
             azure_api_version=azure_api_version
