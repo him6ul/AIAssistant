@@ -19,6 +19,7 @@ from app.ingestion.onenote_ingestor import OneNoteIngestor
 from app.ingestion.github_client import get_github_client
 from app.network import get_network_monitor
 from app.utils.logger import get_logger
+from app.commands.handler import get_command_handler
 
 logger = get_logger(__name__)
 
@@ -87,16 +88,35 @@ async def health():
 async def chat(request: ChatRequest):
     """
     Chat with the AI assistant.
+    First tries command handlers for basic commands, then falls back to LLM.
     """
     try:
+        # First, confirm what was received
+        confirmation = f"I heard: {request.message}. Let me help you with that.\n\n"
+        
+        # Try command handler first for basic commands
+        command_handler = get_command_handler()
+        command_response = await command_handler.process(request.message)
+        
+        if command_response.handled:
+            # Command was handled by a command handler
+            return ChatResponse(
+                response=confirmation + command_response.response,
+                mode="command",
+                model=command_response.command_type.value if command_response.command_type else "command"
+            )
+        
+        # Fall back to LLM for complex queries
         llm_router = get_llm_router()
         response = await llm_router.generate(
             prompt=request.message,
             system_prompt=request.system_prompt
         )
         
+        content = response.get("content", "")
+        
         return ChatResponse(
-            response=response.get("content", ""),
+            response=confirmation + content,
             mode=response.get("mode", "unknown"),
             model=response.get("model", "unknown")
         )

@@ -19,7 +19,8 @@ class TTSEngine:
         self,
         rate: int = 150,
         volume: float = 0.8,
-        voice_id: Optional[str] = None
+        voice_id: Optional[str] = None,
+        prefer_male: bool = True
     ):
         """
         Initialize TTS engine.
@@ -28,20 +29,76 @@ class TTSEngine:
             rate: Speech rate (words per minute)
             volume: Volume level (0.0 to 1.0)
             voice_id: Specific voice ID (optional, uses system default if None)
+            prefer_male: If True, prefer male voices (default: True)
         """
         try:
             self.engine = pyttsx3.init()
             self.engine.setProperty('rate', rate)
             self.engine.setProperty('volume', volume)
             
+            voices = self.engine.getProperty('voices')
+            
             # Set voice if specified
             if voice_id:
-                voices = self.engine.getProperty('voices')
                 for voice in voices:
                     if voice_id in voice.id:
                         self.engine.setProperty('voice', voice.id)
                         logger.info(f"Using voice: {voice.name}")
                         break
+            elif prefer_male:
+                # Try to find a male voice
+                # Common male voice identifiers on macOS (in order of preference)
+                # Prioritize natural-sounding voices first
+                male_voice_preferences = [
+                    'alex',      # Default male voice on macOS (most natural)
+                    'daniel',    # British male (natural)
+                    'fred',      # Male voice (natural)
+                    'ralph',     # Male voice (natural)
+                    'tom',       # Male voice
+                    'lee',       # Male voice
+                    'junior',    # Male voice
+                    'bad',       # Bad News (male, but unusual)
+                    'bahh',      # Male voice (unusual)
+                    'bells',     # Male voice (unusual)
+                    'boing',     # Male voice (unusual)
+                    'deranged',  # Male voice (unusual)
+                    'hysterical', # Male voice (unusual)
+                    'pipe',      # Male voice (unusual)
+                    'trinoids',  # Male voice (unusual)
+                    'whisper',   # Male voice (unusual)
+                    'zarvox'     # Male voice (unusual)
+                ]
+                
+                # Exclude known female voices
+                female_exclusions = ['kathy', 'princess', 'victoria', 'samantha', 'karen', 'susan', 'tessa', 'veena', 'alice', 'anna', 'amelie', 'amira', 'alva', 'soumya', 'aman', 'aru']
+                
+                found_male_voice = False
+                for preferred in male_voice_preferences:
+                    for voice in voices:
+                        voice_id_lower = voice.id.lower()
+                        voice_name_lower = voice.name.lower()
+                        # Check if it matches preferred male voice and is not a female voice
+                        if preferred in voice_id_lower or preferred in voice_name_lower:
+                            # Make sure it's not a female voice
+                            if not any(female in voice_id_lower or female in voice_name_lower for female in female_exclusions):
+                                self.engine.setProperty('voice', voice.id)
+                                logger.info(f"Using male voice: {voice.name} (ID: {voice.id})")
+                                found_male_voice = True
+                                break
+                    if found_male_voice:
+                        break
+                
+                if not found_male_voice:
+                    # Fallback: Try to find any voice that doesn't match female patterns
+                    for voice in voices:
+                        voice_id_lower = voice.id.lower()
+                        voice_name_lower = voice.name.lower()
+                        if not any(female in voice_id_lower or female in voice_name_lower for female in female_exclusions):
+                            # Additional check: prefer voices with deeper/male-sounding names
+                            if any(male in voice_id_lower or male in voice_name_lower for male in ['alex', 'daniel', 'fred', 'ralph', 'tom']):
+                                self.engine.setProperty('voice', voice.id)
+                                logger.info(f"Using voice: {voice.name} (ID: {voice.id})")
+                                break
             
             logger.info("TTS engine initialized successfully")
         except Exception as e:
@@ -136,9 +193,15 @@ def get_tts_engine() -> TTSEngine:
         from dotenv import load_dotenv
         load_dotenv()
         
+        # Get voice preference from env (default to female/False)
+        prefer_male = os.getenv("TTS_PREFER_MALE", "false").lower() == "true"
+        voice_id = os.getenv("TTS_VOICE_ID", None)
+        
         _tts_engine = TTSEngine(
             rate=int(os.getenv("TTS_RATE", "150")),
-            volume=float(os.getenv("TTS_VOLUME", "0.8"))
+            volume=float(os.getenv("TTS_VOLUME", "0.8")),
+            voice_id=voice_id,
+            prefer_male=prefer_male
         )
     return _tts_engine
 

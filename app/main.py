@@ -16,6 +16,7 @@ from app.tasks.storage import get_task_storage
 from app.scheduler.email_scheduler import EmailScheduler
 from app.scheduler.onenote_scheduler import OneNoteScheduler
 from app.scheduler.reminder_scheduler import ReminderScheduler
+from app.connectors.loader import load_connectors, initialize_connectors
 # Voice listener is optional (requires pyaudio)
 try:
     from app.voice_listener import get_voice_listener
@@ -43,6 +44,11 @@ async def initialize_services():
     """
     logger = get_logger(__name__)
     logger.info("Initializing services...")
+    
+    # Load connectors
+    load_connectors()
+    await initialize_connectors()
+    logger.info("Connectors loaded")
     
     # Initialize database
     storage = get_task_storage()

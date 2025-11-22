@@ -16,7 +16,7 @@ except ImportError:
     WHISPER_AVAILABLE = False
     whisper = None
 
-from openai import OpenAI
+from openai import OpenAI, AzureOpenAI
 from app.network import get_network_monitor
 from app.utils.logger import get_logger
 
@@ -32,7 +32,10 @@ class STTEngine:
         self,
         model: str = "base",
         use_openai_api: bool = True,
-        openai_api_key: Optional[str] = None
+        openai_api_key: Optional[str] = None,
+        use_azure: bool = False,
+        azure_endpoint: Optional[str] = None,
+        azure_api_version: str = "2024-02-15-preview"
     ):
         """
         Initialize STT engine.
@@ -40,14 +43,36 @@ class STTEngine:
         Args:
             model: Whisper model size (tiny, base, small, medium, large)
             use_openai_api: Prefer OpenAI API when online
-            openai_api_key: OpenAI API key (optional)
+            openai_api_key: OpenAI API key (or Azure OpenAI API key)
+            use_azure: Whether to use Azure OpenAI
+            azure_endpoint: Azure OpenAI endpoint URL
+            azure_api_version: Azure OpenAI API version
         """
         self.model = model
         self.use_openai_api = use_openai_api
         self.openai_client: Optional[OpenAI] = None
+        self.use_azure = use_azure
+        self.azure_endpoint = azure_endpoint
+        self.azure_api_version = azure_api_version
         
         if openai_api_key:
-            self.openai_client = OpenAI(api_key=openai_api_key)
+            try:
+                if use_azure and azure_endpoint:
+                    # Use Azure OpenAI
+                    self.openai_client = AzureOpenAI(
+                        api_key=openai_api_key,
+                        api_version=azure_api_version,
+                        azure_endpoint=azure_endpoint
+                    )
+                    logger.info(f"Initialized Azure OpenAI STT client: {azure_endpoint}")
+                else:
+                    # Use standard OpenAI
+                    self.openai_client = OpenAI(api_key=openai_api_key)
+                    logger.info("Initialized standard OpenAI STT client")
+            except Exception as e:
+                logger.warning(f"Failed to initialize OpenAI client: {e}. Will use local Whisper only.")
+                self.openai_client = None
+                self.use_openai_api = False
         
         # Load local Whisper model (if available)
         self.local_model = None
@@ -85,15 +110,29 @@ class STTEngine:
             if is_online:
                 try:
                     with open(audio_file_path, "rb") as audio_file:
+                        # Use deployment name for Azure, model name for standard OpenAI
+                        if self.use_azure:
+                            model_name = os.getenv("AZURE_OPENAI_WHISPER_DEPLOYMENT", "whisper-1")
+                        else:
+                            model_name = "whisper-1"
                         transcript = self.openai_client.audio.transcriptions.create(
-                            model="whisper-1",
+                            model=model_name,
                             file=audio_file,
                             language=language
                         )
-                    logger.info("Transcription successful (OpenAI API)")
+                    provider = "Azure OpenAI API" if self.use_azure else "OpenAI API"
+                    logger.info(f"Transcription successful ({provider})")
                     return transcript.text
                 except Exception as e:
-                    logger.warning(f"OpenAI Whisper API failed: {e}, falling back to local")
+                    error_msg = str(e)
+                    # Check for invalid API key errors
+                    if "401" in error_msg or "invalid_api_key" in error_msg.lower() or "Incorrect API key" in error_msg:
+                        logger.warning(f"OpenAI Whisper API key is invalid. Disabling OpenAI API and using local Whisper only.")
+                        # Disable OpenAI API for future requests if key is invalid
+                        self.use_openai_api = False
+                        self.openai_client = None
+                    else:
+                        logger.warning(f"OpenAI Whisper API failed: {e}, falling back to local")
         
         # Fallback to local Whisper
         if self.local_model:
@@ -108,7 +147,7 @@ class STTEngine:
         logger.error("No STT engine available")
         return None
     
-    def transcribe_bytes(
+    async def transcribe_bytes(
         self,
         audio_bytes: bytes,
         language: Optional[str] = None
@@ -128,7 +167,7 @@ class STTEngine:
             try:
                 tmp_file.write(audio_bytes)
                 tmp_file.flush()
-                return self.transcribe(tmp_file.name, language)
+                return await self.transcribe(tmp_file.name, language)
             finally:
                 os.unlink(tmp_file.name)
 
@@ -150,10 +189,18 @@ def get_stt_engine() -> STTEngine:
         from dotenv import load_dotenv
         load_dotenv()
         
+        # Check if Azure OpenAI should be used
+        use_azure = os.getenv("USE_AZURE_OPENAI", "false").lower() == "true"
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+        
         _stt_engine = STTEngine(
             model=os.getenv("WHISPER_MODEL", "base"),
             use_openai_api=True,
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+            openai_api_key=os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY"),
+            use_azure=use_azure,
+            azure_endpoint=azure_endpoint,
+            azure_api_version=azure_api_version
         )
     return _stt_engine
 

@@ -5,7 +5,7 @@ Automatically detects network status and falls back to local models when offline
 
 import json
 from typing import Optional, Dict, Any, List
-from openai import OpenAI
+from openai import OpenAI, AzureOpenAI
 import httpx
 from app.network import get_network_monitor
 from app.utils.logger import get_logger
@@ -25,18 +25,24 @@ class HybridLLMRouter:
         ollama_base_url: str = "http://localhost:11434",
         ollama_model: str = "llama3",
         temperature: float = 0.7,
-        max_tokens: int = 2000
+        max_tokens: int = 2000,
+        use_azure: bool = False,
+        azure_endpoint: Optional[str] = None,
+        azure_api_version: str = "2024-02-15-preview"
     ):
         """
         Initialize the hybrid LLM router.
         
         Args:
-            openai_api_key: OpenAI API key
-            openai_model: OpenAI model name
+            openai_api_key: OpenAI API key (or Azure OpenAI API key)
+            openai_model: OpenAI model name (or Azure deployment name)
             ollama_base_url: Ollama base URL
             ollama_model: Ollama model name
             temperature: Temperature for generation
             max_tokens: Maximum tokens to generate
+            use_azure: Whether to use Azure OpenAI
+            azure_endpoint: Azure OpenAI endpoint URL
+            azure_api_version: Azure OpenAI API version
         """
         self.openai_api_key = openai_api_key
         self.openai_model = openai_model
@@ -44,11 +50,25 @@ class HybridLLMRouter:
         self.ollama_model = ollama_model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.use_azure = use_azure
+        self.azure_endpoint = azure_endpoint
+        self.azure_api_version = azure_api_version
         
         # Initialize OpenAI client if API key is provided
         self.openai_client: Optional[OpenAI] = None
         if openai_api_key:
-            self.openai_client = OpenAI(api_key=openai_api_key)
+            if use_azure and azure_endpoint:
+                # Use Azure OpenAI
+                self.openai_client = AzureOpenAI(
+                    api_key=openai_api_key,
+                    api_version=azure_api_version,
+                    azure_endpoint=azure_endpoint
+                )
+                logger.info(f"Initialized Azure OpenAI client: {azure_endpoint}")
+            else:
+                # Use standard OpenAI
+                self.openai_client = OpenAI(api_key=openai_api_key)
+                logger.info("Initialized standard OpenAI client")
         
         self.network_monitor = get_network_monitor()
         self._current_mode: Optional[str] = None
@@ -258,13 +278,21 @@ def get_llm_router() -> HybridLLMRouter:
         from dotenv import load_dotenv
         load_dotenv()
         
+        # Check if Azure OpenAI should be used
+        use_azure = os.getenv("USE_AZURE_OPENAI", "false").lower() == "true"
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+        
         _router = HybridLLMRouter(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            openai_model=os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview"),
+            openai_api_key=os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY"),
+            openai_model=os.getenv("OPENAI_MODEL") or os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4-turbo-preview"),
             ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             ollama_model=os.getenv("OLLAMA_MODEL", "llama3"),
             temperature=0.7,
-            max_tokens=2000
+            max_tokens=2000,
+            use_azure=use_azure,
+            azure_endpoint=azure_endpoint,
+            azure_api_version=azure_api_version
         )
     return _router
 

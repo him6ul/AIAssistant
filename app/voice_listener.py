@@ -63,16 +63,26 @@ class VoiceListener:
             
             # Use Porcupine create() function with built-in keywords
             # Available built-in keywords: 'hey barista', 'hey google', 'hey siri', 'jarvis', 'porcupine', 'picovoice', etc.
-            # For "hey assistant", we'll use 'jarvis' as a natural alternative
-            # You can also use custom keyword files if needed
-            keyword_to_use = "jarvis"  # Natural-sounding built-in keyword
+            # Map user's wake word to Porcupine's built-in keywords
+            keyword_to_use = "jarvis"  # Default keyword
             wake_word_lower = self.wake_word.lower()
-            if "hey assistant" in wake_word_lower or "assistant" in wake_word_lower:
+            
+            # Check for "jarvis" first (most direct match)
+            if "jarvis" in wake_word_lower:
+                keyword_to_use = "jarvis"
+            elif "hey assistant" in wake_word_lower or "assistant" in wake_word_lower:
                 keyword_to_use = "jarvis"  # Use 'jarvis' as natural alternative
             elif "hey" in wake_word_lower and "siri" in wake_word_lower:
                 keyword_to_use = "hey siri"
             elif "hey" in wake_word_lower and "google" in wake_word_lower:
                 keyword_to_use = "hey google"
+            elif "hey" in wake_word_lower and "barista" in wake_word_lower:
+                keyword_to_use = "hey barista"
+            else:
+                # Default to jarvis for any unrecognized wake word
+                keyword_to_use = "jarvis"
+            
+            logger.info(f"Using Porcupine keyword '{keyword_to_use}' for wake word '{self.wake_word}'")
             
             self.porcupine = create_porcupine(
                 access_key=self.porcupine_access_key,
@@ -118,13 +128,32 @@ class VoiceListener:
         
         try:
             # Transcribe audio
-            text = self.stt_engine.transcribe_bytes(audio_data)
+            text = await self.stt_engine.transcribe_bytes(audio_data)
             
             if not text:
                 logger.warning("No transcription result")
                 return
             
             logger.info(f"Transcribed: {text}")
+            
+            # Check for stop command first
+            text_lower = text.lower().strip()
+            stop_keywords = ["stop", "stop listening", "stop the assistant", "shut down", "exit", "quit"]
+            if any(keyword in text_lower for keyword in stop_keywords):
+                logger.info("Stop command detected - shutting down voice listener")
+                self.tts_engine.speak("Stopping voice listener. Goodbye!")
+                # Stop the listener and clean up
+                await asyncio.sleep(0.5)  # Brief pause to finish speaking
+                self.stop()
+                return
+            
+            # First, repeat the command back to confirm understanding
+            confirmation = f"I heard: {text}. Let me help you with that."
+            logger.info(f"Confirming command: {confirmation}")
+            self.tts_engine.speak(confirmation)
+            
+            # Brief pause after confirmation
+            await asyncio.sleep(0.3)
             
             # Get LLM response
             response = await self.llm_router.generate(
