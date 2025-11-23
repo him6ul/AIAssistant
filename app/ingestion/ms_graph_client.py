@@ -191,7 +191,10 @@ class MSGraphClient:
                 json=json_data,
                 timeout=30.0
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                error_text = response.text
+                logger.error(f"Graph API error {response.status_code}: {error_text}")
+                response.raise_for_status()
             return response.json()
     
     def _get_current_time(self) -> float:

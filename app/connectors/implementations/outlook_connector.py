@@ -39,6 +39,7 @@ class OutlookConnector(MailSourceConnector):
         self.client_id = client_id or os.getenv("MS_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("MS_CLIENT_SECRET")
         self.tenant_id = tenant_id or os.getenv("MS_TENANT_ID")
+        self.user_principal_name = os.getenv("MS_USER_PRINCIPAL_NAME")  # e.g., user@domain.com
         self._graph_client: Optional[MSGraphClient] = None
         self._connected = False
         self._event_callbacks: List[Callable[[UnifiedEmail], None]] = []
@@ -107,34 +108,65 @@ class OutlookConnector(MailSourceConnector):
             return []
         
         try:
-            # Build Microsoft Graph API query
-            folder_path = folder or "inbox"
-            endpoint = f"/me/mailFolders/{folder_path}/messages"
+            # With client credentials (app-only auth), we can't use /me/messages
+            # We need to use /users/{userPrincipalName}/messages
+            # First, try to get the user principal name if not set
+            user_principal = self.user_principal_name
             
             # Build filter query
             filters = []
             if unread_only:
                 filters.append("isRead eq false")
             if since:
-                filters.append(f"receivedDateTime ge {since.isoformat()}Z")
+                # Format datetime for OData filter (ISO 8601 with Z)
+                since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+                filters.append(f"receivedDateTime ge {since_str}")
+            if not user_principal:
+                # Try to get it from the current user endpoint (might work)
+                try:
+                    user_info = await self._graph_client.make_request("GET", "/users", params={"$top": 1})
+                    if user_info.get("value"):
+                        user_principal = user_info["value"][0].get("userPrincipalName")
+                        logger.info(f"Auto-detected user principal: {user_principal}")
+                except Exception as e:
+                    logger.warning(f"Could not auto-detect user principal: {e}")
+                    logger.error("MS_USER_PRINCIPAL_NAME not set. Please set it in .env (e.g., user@domain.com)")
+                    return []
             
+            if not user_principal:
+                logger.error("Cannot fetch emails: user principal name not available")
+                return []
+            
+            # Use /users/{userPrincipalName}/messages endpoint
+            endpoint = f"/users/{user_principal}/messages"
+            
+            # Build query parameters
             query_params = {
                 "$top": limit,
-                "$orderby": "receivedDateTime desc",
-                "$select": "id,subject,bodyPreview,body,from,receivedDateTime,isRead,flag,importance,toRecipients,ccRecipients"
+                "$orderby": "receivedDateTime desc"
             }
+            
+            # Add filter if we have any
             if filters:
                 query_params["$filter"] = " and ".join(filters)
+            
+            logger.debug(f"Fetching Outlook emails from {endpoint} with params: {query_params}")
             
             # Fetch emails from Graph API
             response = await self._graph_client.make_request("GET", endpoint, params=query_params)
             messages = response.get("value", [])
             
+            logger.info(f"Graph API returned {len(messages)} messages from Outlook")
+            
             # Convert to UnifiedEmail objects
             unified_emails = []
             for msg in messages:
-                unified_email = self._convert_outlook_email(msg)
-                unified_emails.append(unified_email)
+                try:
+                    unified_email = self._convert_outlook_email(msg)
+                    unified_emails.append(unified_email)
+                    logger.debug(f"Converted email: {unified_email.subject} from {unified_email.from_address.get('email', 'Unknown')} at {unified_email.timestamp}")
+                except Exception as e:
+                    logger.error(f"Error converting Outlook email: {e}", exc_info=True)
             
             logger.info(f"Fetched {len(unified_emails)} emails from Outlook")
             return unified_emails
@@ -330,12 +362,17 @@ class OutlookConnector(MailSourceConnector):
         body_content = ""
         body_html = None
         
+        # Try to get full body if available (requires separate API call)
         if 'body' in outlook_email and outlook_email['body']:
             body_content = outlook_email['body'].get('content', '')
             if outlook_email['body'].get('contentType') == 'html':
                 body_html = body_content
         elif 'bodyPreview' in outlook_email:
             body_content = outlook_email['bodyPreview']
+        
+        # If no body content, use empty string
+        if not body_content:
+            body_content = ""
         
         # Extract from address
         from_addr = outlook_email.get('from', {})
@@ -357,12 +394,22 @@ class OutlookConnector(MailSourceConnector):
                     "name": email_addr.get('name', '')
                 })
         
-        # Parse timestamp
+        # Parse timestamp - Microsoft Graph returns ISO 8601 with Z suffix
         try:
-            received_dt = datetime.fromisoformat(
-                outlook_email.get('receivedDateTime', '').replace('Z', '+00:00')
-            )
-        except (ValueError, AttributeError):
+            received_str = outlook_email.get('receivedDateTime', '')
+            if received_str:
+                # Handle both Z and timezone offset formats
+                if received_str.endswith('Z'):
+                    received_dt = datetime.fromisoformat(received_str.replace('Z', '+00:00'))
+                else:
+                    received_dt = datetime.fromisoformat(received_str)
+                # Convert to UTC naive datetime for comparison
+                if received_dt.tzinfo:
+                    received_dt = received_dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            else:
+                received_dt = datetime.utcnow()
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"Error parsing receivedDateTime '{outlook_email.get('receivedDateTime', '')}': {e}")
             received_dt = datetime.utcnow()
         
         # Determine importance

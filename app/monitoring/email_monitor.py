@@ -105,7 +105,7 @@ class EmailNotificationMonitor:
         self._running = False
         self._notified_email_ids: Set[str] = set()
         
-        # Initialize orchestrator
+        # Initialize orchestrator (will use global registry with loaded connectors)
         self.orchestrator = AssistantOrchestrator()
         self.importance_checker = EmailImportanceChecker()
         
@@ -146,6 +146,7 @@ class EmailNotificationMonitor:
         try:
             # Calculate time threshold
             since = datetime.utcnow() - timedelta(minutes=self.lookback_minutes)
+            logger.info(f"Checking for emails since {since.isoformat()} (last {self.lookback_minutes} minutes)")
             
             # Fetch emails from Gmail and Outlook
             emails = await self.orchestrator.get_all_emails(
@@ -154,11 +155,17 @@ class EmailNotificationMonitor:
                 limit=50
             )
             
+            logger.info(f"Fetched {len(emails)} total emails from all sources")
+            
             # Filter emails from the last N minutes
             recent_emails = [
                 email for email in emails
                 if email.timestamp >= since
             ]
+            
+            logger.info(f"Found {len(recent_emails)} emails from last {self.lookback_minutes} minutes")
+            for email in recent_emails:
+                logger.debug(f"Recent email: {email.subject} from {email.from_address.get('email', 'Unknown')} at {email.timestamp.isoformat()}")
             
             # Filter out already notified emails
             new_emails = [
@@ -166,12 +173,17 @@ class EmailNotificationMonitor:
                 if email.id not in self._notified_email_ids
             ]
             
+            logger.info(f"Found {len(new_emails)} new emails (not previously notified)")
+            
             # Check importance
             important_emails = []
             for email in new_emails:
-                if await self.importance_checker.is_important(email):
+                is_important = await self.importance_checker.is_important(email)
+                logger.info(f"Email '{email.subject}' importance check: {is_important}")
+                if is_important:
                     important_emails.append(email)
             
+            logger.info(f"Found {len(important_emails)} important emails")
             return important_emails
         except Exception as e:
             logger.error(f"Error checking for important emails: {e}", exc_info=True)
@@ -265,8 +277,11 @@ class EmailNotificationMonitor:
         
         logger.info(f"Starting email notification monitor (check interval: {self.check_interval_seconds}s, lookback: {self.lookback_minutes} minutes)")
         
-        # Initialize orchestrator
-        await self.orchestrator.initialize()
+        # Initialize orchestrator (connectors should already be loaded by main.py)
+        # The orchestrator will use the global registry which has connectors registered
+        initialized = await self.orchestrator.initialize()
+        if not initialized:
+            logger.warning("Email monitor orchestrator initialization returned False - connectors may not be available")
         
         self._running = True
         

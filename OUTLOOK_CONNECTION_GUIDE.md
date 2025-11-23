@@ -36,17 +36,22 @@ This guide explains how to connect the AI Assistant to your Outlook account usin
 
 ## 🔓 Step 3: Configure API Permissions
 
+**IMPORTANT:** For client credentials (app-only) authentication, you MUST use **Application permissions**, not Delegated permissions.
+
 1. In your app registration, go to **API permissions**
 2. Click **Add a permission**
 3. Select **Microsoft Graph**
-4. Choose **Application permissions** (for background access)
+4. Choose **Application permissions** (NOT Delegated - this is critical!)
 5. Add the following permissions:
-   - `Mail.Read` - Read user mail
-   - `Mail.ReadWrite` - Read and write user mail
-   - `MailboxSettings.Read` - Read mailbox settings
+   - `Mail.Read` - Read user mail (Application permission)
+   - `Mail.ReadWrite` - Read and write user mail (Application permission, optional)
+   - `User.Read.All` - Read all users' basic profiles (Application permission, needed to list users)
 6. Click **Add permissions**
-7. Click **Grant admin consent** (if you're an admin)
-   - For personal accounts, you may need to consent when first connecting
+7. **CRITICAL:** Click **Grant admin consent for [your organization]**
+   - This button appears at the top of the API permissions page
+   - You must be an admin to grant consent
+   - If you're not an admin, ask your IT admin to grant consent
+   - Wait 5-10 minutes after granting consent for permissions to propagate
 
 ## ⚙️ Step 4: Configure .env File
 
