@@ -35,11 +35,15 @@ class EmailImportanceChecker:
         Returns:
             True if email is important, False otherwise
         """
+        logger.debug(f"      🔍 Checking importance for: '{email.subject}'")
+        
         # Heuristic checks first (fast)
         if email.is_important:
+            logger.debug(f"      ✅ IMPORTANT (heuristic): is_important flag is True")
             return True
         
         if email.priority and email.priority.value in ["high", "urgent"]:
+            logger.debug(f"      ✅ IMPORTANT (heuristic): priority is {email.priority.value}")
             return True
         
         # Check for important keywords in subject
@@ -48,10 +52,13 @@ class EmailImportanceChecker:
             "asap", "critical", "priority", "attention", "response needed"
         ]
         subject_lower = email.subject.lower()
-        if any(keyword in subject_lower for keyword in important_keywords):
+        matching_keywords = [kw for kw in important_keywords if kw in subject_lower]
+        if matching_keywords:
+            logger.debug(f"      ✅ IMPORTANT (heuristic): found keywords in subject: {matching_keywords}")
             return True
         
         # Use LLM for more nuanced detection
+        logger.debug(f"      🤖 Using LLM for importance analysis...")
         try:
             prompt = f"""Analyze this email and determine if it's important and requires immediate attention.
 
@@ -67,17 +74,23 @@ Consider:
 
 Respond with only "YES" if important, or "NO" if not important."""
 
+            llm_start = datetime.utcnow()
             response = await self.llm_router.generate(
                 prompt=prompt,
                 system_prompt="You are an email importance analyzer. Respond with only YES or NO."
             )
+            llm_duration = (datetime.utcnow() - llm_start).total_seconds()
             
             if response and "content" in response:
                 result = response["content"].strip().upper()
-                return result.startswith("YES")
+                is_important_result = result.startswith("YES")
+                logger.debug(f"      {'✅' if is_important_result else '❌'} IMPORTANT (LLM): {result} (took {llm_duration:.2f}s)")
+                return is_important_result
+            else:
+                logger.debug(f"      ❌ IMPORTANT (LLM): No valid response from LLM")
             return False
         except Exception as e:
-            logger.error(f"Error checking email importance with LLM: {e}")
+            logger.error(f"      ❌ Error checking email importance with LLM: {e}")
             # Default to not important if LLM check fails
             return False
 
@@ -143,51 +156,121 @@ class EmailNotificationMonitor:
         Returns:
             List of new important emails
         """
+        check_start_time = datetime.utcnow()
+        since = check_start_time - timedelta(minutes=self.lookback_minutes)
+        
+        logger.info("=" * 80)
+        logger.info(f"📧 EMAIL MONITOR CHECK STARTED at {check_start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        logger.info(f"   Checking for emails since: {since.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        logger.info(f"   Lookback window: {self.lookback_minutes} minutes")
+        logger.info(f"   Sources to check: Gmail, Outlook")
+        logger.info("-" * 80)
+        
         try:
-            # Calculate time threshold
-            since = datetime.utcnow() - timedelta(minutes=self.lookback_minutes)
-            logger.info(f"Checking for emails since {since.isoformat()} (last {self.lookback_minutes} minutes)")
-            
             # Fetch emails from Gmail and Outlook
             # Check both unread and read emails to catch important ones
+            logger.info("🔍 Fetching emails from all configured sources...")
+            fetch_start = datetime.utcnow()
+            
             emails = await self.orchestrator.get_all_emails(
                 source_types=[SourceType.GMAIL, SourceType.OUTLOOK],
                 unread_only=False,  # Check all emails, not just unread
                 limit=50
             )
             
-            logger.info(f"Fetched {len(emails)} total emails from all sources")
+            fetch_duration = (datetime.utcnow() - fetch_start).total_seconds()
+            
+            # Count emails by source
+            emails_by_source = {}
+            for email in emails:
+                source = email.source_type.value
+                emails_by_source[source] = emails_by_source.get(source, 0) + 1
+            
+            logger.info(f"✅ Fetched {len(emails)} total emails in {fetch_duration:.2f}s")
+            for source, count in emails_by_source.items():
+                logger.info(f"   - {source}: {count} emails")
             
             # Filter emails from the last N minutes
+            logger.info(f"⏰ Filtering emails from last {self.lookback_minutes} minutes...")
             recent_emails = [
                 email for email in emails
                 if email.timestamp >= since
             ]
             
-            logger.info(f"Found {len(recent_emails)} emails from last {self.lookback_minutes} minutes")
+            recent_by_source = {}
             for email in recent_emails:
-                logger.debug(f"Recent email: {email.subject} from {email.from_address.get('email', 'Unknown')} at {email.timestamp.isoformat()}")
+                source = email.source_type.value
+                recent_by_source[source] = recent_by_source.get(source, 0) + 1
+            
+            logger.info(f"✅ Found {len(recent_emails)} emails from last {self.lookback_minutes} minutes")
+            for source, count in recent_by_source.items():
+                logger.info(f"   - {source}: {count} recent emails")
+            
+            # Log details of recent emails
+            if recent_emails:
+                logger.info("📋 Recent emails details:")
+                for idx, email in enumerate(recent_emails, 1):
+                    sender = email.from_address.get('email', 'Unknown')
+                    sender_name = email.from_address.get('name', '')
+                    if sender_name:
+                        sender_display = f"{sender_name} <{sender}>"
+                    else:
+                        sender_display = sender
+                    logger.info(f"   {idx}. [{email.source_type.value}] '{email.subject}' from {sender_display} at {email.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                    logger.info(f"      ID: {email.id}, Important flag: {email.is_important}, Priority: {email.priority}")
+            else:
+                logger.info("   No recent emails found in the time window")
             
             # Filter out already notified emails
+            logger.info(f"🔍 Checking for previously notified emails (tracking {len(self._notified_email_ids)} notified IDs)...")
             new_emails = [
                 email for email in recent_emails
                 if email.id not in self._notified_email_ids
             ]
             
-            logger.info(f"Found {len(new_emails)} new emails (not previously notified)")
+            logger.info(f"✅ Found {len(new_emails)} new emails (not previously notified)")
+            if len(new_emails) < len(recent_emails):
+                logger.info(f"   ({len(recent_emails) - len(new_emails)} emails were already notified)")
             
             # Check importance
+            logger.info("🎯 Checking email importance...")
             important_emails = []
-            for email in new_emails:
+            importance_checks = {"heuristic": 0, "llm": 0, "total_checked": 0}
+            
+            for idx, email in enumerate(new_emails, 1):
+                logger.info(f"   [{idx}/{len(new_emails)}] Checking: '{email.subject}' from {email.from_address.get('email', 'Unknown')}")
+                
+                # Log email details
+                logger.info(f"      - Source: {email.source_type.value}")
+                logger.info(f"      - Timestamp: {email.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                logger.info(f"      - Is Important Flag: {email.is_important}")
+                logger.info(f"      - Priority: {email.priority}")
+                
                 is_important = await self.importance_checker.is_important(email)
-                logger.info(f"Email '{email.subject}' importance check: {is_important}")
+                importance_checks["total_checked"] += 1
+                
                 if is_important:
                     important_emails.append(email)
+                    logger.info(f"      ✅ RESULT: IMPORTANT - Will notify user")
+                else:
+                    logger.info(f"      ❌ RESULT: Not important - Skipping")
             
-            logger.info(f"Found {len(important_emails)} important emails")
+            logger.info("-" * 80)
+            logger.info(f"📊 IMPORTANCE CHECK SUMMARY:")
+            logger.info(f"   Total emails checked: {importance_checks['total_checked']}")
+            logger.info(f"   Important emails found: {len(important_emails)}")
+            logger.info(f"   Not important: {importance_checks['total_checked'] - len(important_emails)}")
+            
+            check_duration = (datetime.utcnow() - check_start_time).total_seconds()
+            logger.info(f"⏱️  Total check duration: {check_duration:.2f}s")
+            logger.info("=" * 80)
+            
             return important_emails
         except Exception as e:
-            logger.error(f"Error checking for important emails: {e}", exc_info=True)
+            check_duration = (datetime.utcnow() - check_start_time).total_seconds()
+            logger.error("=" * 80)
+            logger.error(f"❌ ERROR in email check (duration: {check_duration:.2f}s): {e}", exc_info=True)
+            logger.error("=" * 80)
             return []
     
     async def _notify_about_email(self, email: UnifiedEmail):
@@ -210,7 +293,8 @@ class EmailNotificationMonitor:
             # Build notification message
             notification = f"{prefix}. {subject_line}. {from_line}."
             
-            logger.info(f"Notifying about important email: {subject} from {sender_name}")
+            logger.info(f"🔊 Speaking notification for email: '{subject}' from {sender_name}")
+            logger.info(f"   Notification text: {notification}")
             
             # Speak the notification
             await asyncio.to_thread(self.tts_engine.speak, notification)
@@ -219,8 +303,10 @@ class EmailNotificationMonitor:
             self._notified_email_ids.add(email.id)
             self._save_notification_history()
             
+            logger.info(f"✅ Notification completed and email marked as notified (ID: {email.id})")
+            
         except Exception as e:
-            logger.error(f"Error notifying about email: {e}", exc_info=True)
+            logger.error(f"❌ Error notifying about email: {e}", exc_info=True)
     
     async def _notify_about_multiple_emails(self, emails: List[UnifiedEmail]):
         """
@@ -257,42 +343,61 @@ class EmailNotificationMonitor:
             important_emails = await self._check_for_important_emails()
             
             if not important_emails:
-                logger.debug("No new important emails found")
+                logger.info("ℹ️  No new important emails found - no notification needed")
                 return
             
-            logger.info(f"Found {len(important_emails)} new important email(s)")
+            logger.info("🔔 NOTIFICATION PHASE")
+            logger.info(f"   Found {len(important_emails)} new important email(s) to notify about")
             
             if len(important_emails) == 1:
-                await self._notify_about_email(important_emails[0])
+                email = important_emails[0]
+                logger.info(f"   Notifying about single email: '{email.subject}' from {email.from_address.get('email', 'Unknown')}")
+                await self._notify_about_email(email)
             else:
+                logger.info(f"   Notifying about {len(important_emails)} emails")
                 await self._notify_about_multiple_emails(important_emails)
+            
+            logger.info("✅ Notification phase completed")
                 
         except Exception as e:
-            logger.error(f"Error in check and notify: {e}", exc_info=True)
+            logger.error(f"❌ Error in check and notify: {e}", exc_info=True)
     
     async def start(self):
         """Start the email monitoring service."""
         if self._running:
-            logger.warning("Email notification monitor already running")
+            logger.warning("⚠️  Email notification monitor already running")
             return
         
-        logger.info(f"Starting email notification monitor (check interval: {self.check_interval_seconds}s, lookback: {self.lookback_minutes} minutes)")
+        logger.info("=" * 80)
+        logger.info("🚀 STARTING EMAIL NOTIFICATION MONITOR")
+        logger.info(f"   Check interval: {self.check_interval_seconds}s ({self.check_interval_seconds/60:.1f} minutes)")
+        logger.info(f"   Lookback window: {self.lookback_minutes} minutes")
+        logger.info(f"   Tracking {len(self._notified_email_ids)} previously notified emails")
+        logger.info("=" * 80)
         
         # Initialize orchestrator (connectors should already be loaded by main.py)
         # The orchestrator will use the global registry which has connectors registered
+        logger.info("🔌 Initializing connectors...")
         initialized = await self.orchestrator.initialize()
         if not initialized:
-            logger.warning("Email monitor orchestrator initialization returned False - connectors may not be available")
+            logger.warning("⚠️  Email monitor orchestrator initialization returned False - connectors may not be available")
+        else:
+            logger.info("✅ Connectors initialized successfully")
         
         self._running = True
         
         # Run immediately once
+        logger.info("▶️  Running initial email check...")
         await self._check_and_notify()
         
         # Then run periodically
+        check_count = 1
         while self._running:
+            logger.info(f"⏳ Next check in {self.check_interval_seconds}s (check #{check_count} completed)")
             await asyncio.sleep(self.check_interval_seconds)
             if self._running:
+                check_count += 1
+                logger.info(f"🔄 Starting periodic check #{check_count}...")
                 await self._check_and_notify()
     
     def stop(self):

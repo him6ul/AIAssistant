@@ -1,0 +1,12 @@
+# Cursor Rules for AI Assistant
+
+## Test Execution
+- After making code changes, run tests using: `./scripts/run_tests_on_change.sh`
+- Tests should be run automatically after significant code changes
+- Focus on unit tests for quick feedback
+
+## Code Quality
+- Run tests before considering changes complete
+- Fix any failing tests before proceeding
+- Maintain test coverage above 80%
+

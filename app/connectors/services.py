@@ -201,17 +201,25 @@ class UnifiedInboxService:
         all_emails = []
         connectors = self.registry.get_all_mail_connectors()
         
+        logger.info(f"📬 UnifiedInboxService: Fetching emails from {len(connectors)} registered mail connector(s)")
+        
         if source_types:
             connectors = {
                 st: conn for st, conn in connectors.items()
                 if st in source_types
             }
+            logger.info(f"   Filtered to {len(connectors)} connector(s) matching source types: {[st.value for st in source_types]}")
         
         for source_type, connector in connectors.items():
             try:
+                logger.info(f"   🔍 Checking {source_type.value} connector...")
+                
                 if not connector.is_connected():
-                    logger.warning(f"Connector {source_type} is not connected, skipping")
+                    logger.warning(f"   ⚠️  {source_type.value} connector is not connected, skipping")
                     continue
+                
+                logger.info(f"   ✅ {source_type.value} is connected, fetching emails (limit={limit}, unread_only={unread_only}, since={since})...")
+                fetch_start = datetime.utcnow()
                 
                 emails = await connector.fetch_emails(
                     limit=limit,
@@ -219,14 +227,19 @@ class UnifiedInboxService:
                     unread_only=unread_only,
                     since=since,
                 )
+                
+                fetch_duration = (datetime.utcnow() - fetch_start).total_seconds()
                 all_emails.extend(emails)
-                logger.debug(f"Fetched {len(emails)} emails from {source_type}")
+                logger.info(f"   ✅ Fetched {len(emails)} emails from {source_type.value} in {fetch_duration:.2f}s")
+                
             except Exception as e:
-                logger.error(f"Error fetching emails from {source_type}: {e}", exc_info=True)
+                logger.error(f"   ❌ Error fetching emails from {source_type.value}: {e}", exc_info=True)
                 # Continue with other connectors - graceful degradation
         
         # Sort by timestamp (newest first)
         all_emails.sort(key=lambda e: e.timestamp, reverse=True)
+        
+        logger.info(f"📊 UnifiedInboxService: Total {len(all_emails)} emails fetched from all sources")
         
         return all_emails
     
