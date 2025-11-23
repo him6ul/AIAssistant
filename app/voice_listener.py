@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from app.stt import get_stt_engine
 from app.llm_router import get_llm_router
 from app.tts import get_tts_engine
+from app.commands.handler import get_command_handler
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -223,15 +224,24 @@ class VoiceListener:
             # Brief pause after confirmation
             await asyncio.sleep(0.3)
             
-            # Get LLM response
-            response = await self.llm_router.generate(
-                prompt=text,
-                system_prompt="You are a helpful personal assistant. Be concise and actionable."
-            )
+            # Try command handler first (for weather, time, etc.)
+            command_handler = get_command_handler()
+            command_response = await command_handler.process(text)
             
-            content = response.get("content", "")
+            if command_response.handled:
+                # Command was handled by a command handler (e.g., weather with auto-location)
+                content = command_response.response
+                logger.info(f"Command handled by {command_response.command_type}, response (length: {len(content)} chars): {content}")
+            else:
+                # Fall back to LLM for complex queries
+                response = await self.llm_router.generate(
+                    prompt=text,
+                    system_prompt="You are a helpful personal assistant. Be concise and actionable."
+                )
+                content = response.get("content", "")
+                logger.info(f"LLM response (length: {len(content)} chars): {content}")
+            
             # Don't include mode/engine info in spoken response - just speak the content
-            logger.info(f"Speaking response: {content[:100]}...")
             # Run TTS in executor to avoid blocking async event loop
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self.tts_engine.speak, content)

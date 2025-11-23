@@ -12,6 +12,7 @@ import uvicorn
 from app.llm_router import get_llm_router, reset_llm_router
 from app.stt import reset_stt_engine
 from app.voice_listener import reset_voice_listener
+from app.tts import get_tts_engine
 from app.tasks.storage import get_task_storage
 from app.tasks.models import Task, TaskQuery, TaskStatus, TaskClassification, TaskImportance
 from app.tasks.extractor import get_task_extractor, TaskExtractionRequest
@@ -22,6 +23,7 @@ from app.ingestion.github_client import get_github_client
 from app.network import get_network_monitor
 from app.utils.logger import get_logger
 from app.commands.handler import get_command_handler
+import asyncio
 
 logger = get_logger(__name__)
 
@@ -102,8 +104,18 @@ async def chat(request: ChatRequest):
         
         if command_response.handled:
             # Command was handled by a command handler
+            response_text = command_response.response
+            # Speak the response (without confirmation prefix for cleaner audio)
+            try:
+                tts_engine = get_tts_engine()
+                loop = asyncio.get_event_loop()
+                # Run TTS in executor to avoid blocking
+                await loop.run_in_executor(None, tts_engine.speak, response_text)
+            except Exception as e:
+                logger.warning(f"TTS failed for chat response: {e}")
+            
             return ChatResponse(
-                response=confirmation + command_response.response,
+                response=confirmation + response_text,
                 mode="command",
                 model=command_response.command_type.value if command_response.command_type else "command"
             )
@@ -116,6 +128,15 @@ async def chat(request: ChatRequest):
         )
         
         content = response.get("content", "")
+        
+        # Speak the response
+        try:
+            tts_engine = get_tts_engine()
+            loop = asyncio.get_event_loop()
+            # Run TTS in executor to avoid blocking
+            await loop.run_in_executor(None, tts_engine.speak, content)
+        except Exception as e:
+            logger.warning(f"TTS failed for chat response: {e}")
         
         return ChatResponse(
             response=confirmation + content,

@@ -1,11 +1,13 @@
 """
 Text-to-Speech (TTS) module.
-Uses pyttsx3 for local TTS on macOS.
+Uses pyttsx3 for local TTS on macOS, with fallback to macOS 'say' command.
 """
 
 import pyttsx3
 import threading
 import time
+import subprocess
+import platform
 from typing import Optional
 from app.utils.logger import get_logger
 
@@ -26,6 +28,8 @@ class TTSEngine:
     ):
         # Lock to ensure only one TTS call at a time
         self._speak_lock = threading.Lock()
+        # Store rate for use with 'say' command
+        self.rate = rate
         """
         Initialize TTS engine.
         
@@ -128,28 +132,82 @@ class TTSEngine:
         # Use lock to prevent concurrent TTS calls and ensure completion
         with self._speak_lock:
             try:
-                logger.info(f"Speaking: {text[:100]}...")
+                logger.info(f"Speaking (length: {len(text)} chars): {text}")
                 
-                # Create a new engine instance for thread safety
-                # pyttsx3 can have issues when used across threads
-                thread_engine = pyttsx3.init()
-                thread_engine.setProperty('rate', self.engine.getProperty('rate'))
-                thread_engine.setProperty('volume', self.engine.getProperty('volume'))
-                thread_engine.setProperty('voice', self.engine.getProperty('voice'))
-                
-                # Speak the text
-                thread_engine.say(text)
-                if wait:
-                    # runAndWait() blocks until speech completes
-                    thread_engine.runAndWait()
+                # Use macOS 'say' command directly (more reliable in background processes)
+                if platform.system() == "Darwin":  # macOS
+                    try:
+                        # Get voice name from engine if available
+                        voice_name = None
+                        if self.engine:
+                            try:
+                                voice_id = self.engine.getProperty('voice')
+                                # Extract voice name from voice ID (e.g., "com.apple.speech.synthesis.voice.Alex")
+                                if voice_id:
+                                    voice_parts = voice_id.split('.')
+                                    if len(voice_parts) > 0:
+                                        voice_name = voice_parts[-1]
+                            except:
+                                pass
+                        
+                        # Build say command
+                        cmd = ['say']
+                        if voice_name:
+                            cmd.extend(['-v', voice_name])
+                        # Add rate if specified (say uses -r for rate in words per minute)
+                        if hasattr(self, 'rate') and self.rate:
+                            cmd.extend(['-r', str(self.rate)])
+                        cmd.append(text)
+                        
+                        # Run say command and wait for completion
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                        if result.returncode == 0:
+                            logger.info(f"Finished speaking via 'say' command (length: {len(text)} chars)")
+                            return True
+                        else:
+                            logger.error(f"'say' command failed: {result.stderr}")
+                            # Fallback to pyttsx3
+                            return self._speak_pyttsx3(text, wait)
+                    except subprocess.TimeoutExpired:
+                        logger.error("'say' command timed out")
+                        # Fallback to pyttsx3
+                        return self._speak_pyttsx3(text, wait)
+                    except Exception as say_error:
+                        logger.warning(f"'say' command error: {say_error}, trying pyttsx3")
+                        # Fallback to pyttsx3
+                        return self._speak_pyttsx3(text, wait)
                 else:
-                    thread_engine.startLoop(False)
-                
-                logger.info(f"Finished speaking: {text[:50]}...")
-                return True
+                    # Non-macOS: use pyttsx3
+                    return self._speak_pyttsx3(text, wait)
             except Exception as e:
                 logger.error(f"TTS failed: {e}", exc_info=True)
+                import traceback
+                logger.error(f"TTS traceback: {traceback.format_exc()}")
                 return False
+    
+    def _speak_pyttsx3(self, text: str, wait: bool = True) -> bool:
+        """Fallback method using pyttsx3."""
+        try:
+            # Stop any ongoing speech first
+            try:
+                self.engine.stop()
+            except:
+                pass
+            
+            # Use the main engine directly with lock protection
+            self.engine.say(text)
+            if wait:
+                # runAndWait() blocks until speech completes
+                self.engine.runAndWait()
+                logger.debug(f"TTS runAndWait() completed")
+            else:
+                self.engine.startLoop(False)
+            
+            logger.info(f"Finished speaking via pyttsx3 (length: {len(text)} chars)")
+            return True
+        except Exception as e:
+            logger.error(f"pyttsx3 failed: {e}", exc_info=True)
+            return False
     
     def save_to_file(self, text: str, filename: str) -> bool:
         """
