@@ -14,9 +14,9 @@ This guide explains how to add a new connector to the system without modifying a
 
 Determine which base interface your connector should implement:
 
-- **`MessageSourceConnector`**: For messaging platforms (WhatsApp, Teams, Slack, Telegram, SMS)
+- **`MessageSourceConnector`**: For messaging platforms (Slack, Telegram, SMS)
 - **`MailSourceConnector`**: For email platforms (Gmail, Outlook, IMAP, Apple Mail)
-- **`NoteSourceConnector`**: For notes platforms (OneNote, Evernote, etc.)
+- **`NoteSourceConnector`**: For notes platforms (Evernote, etc.)
 
 ### Step 2: Add Source Type (if new platform)
 
@@ -245,7 +245,7 @@ Your connector is now integrated. The orchestrator will automatically:
 
 ## 📝 Example: Adding Telegram Connector
 
-See `app/connectors/implementations/whatsapp_connector.py` as a reference implementation.
+See `app/connectors/implementations/gmail_connector.py` or `app/connectors/implementations/outlook_connector.py` as reference implementations.
 
 Key points:
 1. Implement `MessageSourceConnector`

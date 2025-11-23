@@ -2,10 +2,8 @@
 Connector module for integrating with various communication and productivity platforms.
 
 This module provides a pluggable architecture for connecting to:
-- Messaging platforms (WhatsApp, Teams, Slack)
 - Email platforms (Gmail, Outlook, IMAP)
-- Notes platforms (OneNote)
-- Future platforms (Telegram, SMS, Apple Mail, CRMs, etc.)
+- Future platforms (Slack, Telegram, SMS, Apple Mail, CRMs, etc.)
 
 All connectors follow a unified interface pattern for easy extensibility.
 """

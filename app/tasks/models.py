@@ -38,7 +38,7 @@ class Task(BaseModel):
     description: Optional[str] = Field(None, description="Task description")
     due_date: Optional[datetime] = Field(None, description="Due date")
     people_involved: List[str] = Field(default_factory=list, description="People involved")
-    source: str = Field(..., description="Source (email/onenote)")
+    source: str = Field(..., description="Source (email/manual)")
     source_id: Optional[str] = Field(None, description="Source item ID")
     importance: TaskImportance = Field(TaskImportance.MEDIUM, description="Importance level")
     classification: TaskClassification = Field(TaskClassification.DO, description="Task classification")
@@ -54,7 +54,7 @@ class Task(BaseModel):
 class TaskExtractionRequest(BaseModel):
     """Request model for task extraction."""
     content: str = Field(..., description="Content to extract tasks from")
-    source: str = Field(..., description="Source type (email/onenote)")
+    source: str = Field(..., description="Source type (email/manual)")
     source_id: Optional[str] = Field(None, description="Source item ID")
 
 

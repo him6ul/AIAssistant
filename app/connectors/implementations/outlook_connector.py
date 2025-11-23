@@ -66,10 +66,14 @@ class OutlookConnector(MailSourceConnector):
             )
             
             # Test connection
-            await self._graph_client.get_access_token()
-            self._connected = True
-            logger.info("Outlook connector connected successfully")
-            return True
+            token = self._graph_client.get_access_token()
+            if token:
+                self._connected = True
+                logger.info("Outlook connector connected successfully")
+                return True
+            else:
+                logger.error("Failed to get access token")
+                return False
         except Exception as e:
             logger.error(f"Error connecting to Outlook: {e}")
             return False

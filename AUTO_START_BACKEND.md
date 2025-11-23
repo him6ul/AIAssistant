@@ -21,7 +21,7 @@ This will:
 The Launch Agent will automatically start:
 - ✅ Backend API server (FastAPI on port 8000)
 - ✅ Voice listener (if VOICE_ENABLED=true)
-- ✅ All background schedulers (email, OneNote, reminders)
+- ✅ All background schedulers (email, reminders)
 
 ## Manual Setup
 

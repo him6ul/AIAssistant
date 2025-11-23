@@ -14,13 +14,10 @@ from pydantic import BaseModel, Field
 
 class SourceType(str, Enum):
     """Enumeration of all supported source types."""
-    WHATSAPP = "whatsapp"
-    TEAMS = "teams"
     SLACK = "slack"
     OUTLOOK = "outlook"
     GMAIL = "gmail"
     IMAP = "imap"
-    ONENOTE = "onenote"
     TELEGRAM = "telegram"
     SMS = "sms"
     APPLE_MAIL = "apple_mail"

@@ -1,13 +1,12 @@
 # AI Personal Assistant for macOS
 
-A complete Mac-local AI Personal Assistant with hybrid LLM support (OpenAI + Ollama), voice activation, email/OneNote ingestion, task extraction, and macOS integration.
+A complete Mac-local AI Personal Assistant with hybrid LLM support (OpenAI + Ollama), voice activation, email ingestion, task extraction, and macOS integration.
 
 ## Features
 
 - **Hybrid LLM Mode**: Automatically switches between OpenAI GPT-4/GPT-5 (online) and Ollama models (offline)
 - **Voice First**: Wake word detection with Porcupine, local Whisper STT, and TTS
 - **Data Ingestion**: 
-  - OneNote via Microsoft Graph API
   - Email via Office 365 Graph API and IMAP
 - **Task Extraction**: LLM-powered task extraction from emails and notes
 - **Action Execution**: Create reminders, calendar events, and email drafts via AppleScript
@@ -27,11 +26,9 @@ AI_Assistant/
 │   ├── voice_listener.py  # Voice activation
 │   ├── scheduler/         # Background workers
 │   │   ├── email_scheduler.py
-│   │   ├── onenote_scheduler.py
 │   │   └── reminder_scheduler.py
 │   ├── ingestion/         # Data ingestion
 │   │   ├── ms_graph_client.py
-│   │   ├── onenote_ingestor.py
 │   │   ├── email_o365_ingestor.py
 │   │   ├── email_imap_ingestor.py
 │   │   └── github_client.py
@@ -226,7 +223,6 @@ The FastAPI server provides these endpoints:
 - `POST /tasks/extract` - Extract tasks from content
 - `POST /actions/execute` - Execute action
 - `POST /ingestion/email/scan` - Manually scan emails
-- `POST /ingestion/onenote/scan` - Manually scan OneNote
 - `GET /status` - Get system status
 
 ## Voice Commands
@@ -240,7 +236,6 @@ The FastAPI server provides these endpoints:
 
 Tasks are automatically extracted from:
 - Emails containing action keywords
-- OneNote pages
 - Manual input via API or menu bar app
 
 Tasks include:
@@ -249,7 +244,7 @@ Tasks include:
 - People involved
 - Importance (high/medium/low)
 - Classification (do/respond/delegate/follow-up/waiting-on)
-- Source (email/onenote/manual)
+- Source (email/manual)
 
 ## Actions
 

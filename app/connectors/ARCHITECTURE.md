@@ -41,15 +41,15 @@ The connector architecture follows a **layered, plugin-based design** that enabl
                        │
 ┌──────────────────────▼──────────────────────────────────────┐
 │              Implementation Layer                            │
-│  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐           │
-│  │Whats │ │Teams │ │Outlook│ │Gmail │ │OneNote│           │
-│  │ App  │ │      │ │       │ │      │ │       │           │
-│  └──────┘ └──────┘ └──────┘ └──────┘ └──────┘           │
+│  ┌──────┐ ┌──────┐                                      │
+│  │Outlook│ │Gmail │                                      │
+│  │       │ │      │                                      │
+│  └──────┘ └──────┘                                      │
 └──────────────────────┬──────────────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────────────┐
 │                  Platform APIs                                │
-│  WhatsApp API │ Graph API │ Gmail API │ IMAP │ etc.        │
+│  Graph API │ Gmail API │ IMAP │ etc.                      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -62,7 +62,7 @@ Application Start
     │
     ├─> Create ConnectorRegistry
     │
-    ├─> Initialize Connectors (WhatsApp, Teams, etc.)
+    ├─> Initialize Connectors (Outlook, Gmail, etc.)
     │   │
     │   └─> Register in Registry
     │
@@ -88,13 +88,13 @@ User Request: "Get all messages"
     │
     ├─> UnifiedMessageService.get_all_messages()
     │
-    ├─> Registry.get_all_message_connectors()
+    ├─> Registry.get_all_mail_connectors()
     │   │
-    │   ├─> WhatsAppConnector.fetch_messages()
-    │   │   └─> Convert to UnifiedMessage
+    │   ├─> OutlookConnector.fetch_emails()
+    │   │   └─> Convert to UnifiedEmail
     │   │
-    │   ├─> TeamsConnector.fetch_messages()
-    │   │   └─> Convert to UnifiedMessage
+    │   ├─> GmailConnector.fetch_emails()
+    │   │   └─> Convert to UnifiedEmail
     │   │
     │   └─> ... (other connectors)
     │
@@ -113,7 +113,7 @@ Platform-Specific Data
     ├─> Connector.fetch_*()
     │   │
     │   └─> Platform API Response
-    │       (e.g., WhatsApp JSON, Teams Graph API, Gmail IMAP)
+    │       (e.g., Outlook Graph API, Gmail IMAP)
     │
     ├─> _convert_*() Method
     │   │
@@ -214,7 +214,7 @@ orchestrator = AssistantOrchestrator(registry=registry)
 
 # ❌ Bad: Direct dependency
 orchestrator = AssistantOrchestrator()
-orchestrator.whatsapp = WhatsAppConnector()  # Tight coupling
+orchestrator.outlook = OutlookConnector()  # Tight coupling
 ```
 
 ### 3. Graceful Degradation
@@ -251,7 +251,7 @@ User → Orchestrator → MessageService → Registry
                                     ↓
                     ┌───────────────┼───────────────┐
                     ↓               ↓               ↓
-              WhatsApp          Teams          Slack
+              Slack          Telegram          SMS
                     │               │               │
                     └───────────────┼───────────────┘
                                     ↓
@@ -279,7 +279,7 @@ Developer → Create Connector Class
 
 ```
 UnifiedMessage
-    ├─> source_type: SourceType (WHATSAPP, TEAMS, etc.)
+    ├─> source_type: SourceType (OUTLOOK, GMAIL, etc.)
     ├─> content: str
     ├─> from_user: Dict
     ├─> to_users: List[Dict]
@@ -294,7 +294,7 @@ UnifiedEmail
     └─> raw_data: Dict (platform-specific, preserved)
 
 UnifiedNote
-    ├─> source_type: SourceType (ONENOTE, etc.)
+    ├─> source_type: SourceType (for future notes platforms)
     ├─> title: str
     ├─> content: str
     ├─> notebook_id: Optional[str]

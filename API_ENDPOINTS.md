@@ -77,7 +77,6 @@ Your FastAPI server automatically generates OpenAPI (Swagger) documentation:
 
 #### Ingestion
 - `POST /ingestion/email/scan` - Manually scan emails
-- `POST /ingestion/onenote/scan` - Manually scan OneNote
 
 #### GitHub (if configured)
 - `GET /github/user` - Get GitHub user info

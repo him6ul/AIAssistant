@@ -1,5 +1,5 @@
 """
-Task extraction from emails and OneNote using LLM.
+Task extraction from emails using LLM.
 """
 
 import json
@@ -28,7 +28,7 @@ class TaskExtractor:
         
         Args:
             content: Content to extract tasks from
-            source: Source type (email/onenote)
+            source: Source type (email/manual)
         
         Returns:
             Extraction prompt

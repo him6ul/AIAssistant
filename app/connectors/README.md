@@ -5,10 +5,8 @@ A modular, pluggable architecture for integrating with multiple communication an
 ## 🎯 Overview
 
 This module provides a clean, extensible system for connecting to various platforms:
-- **Messaging**: WhatsApp, Microsoft Teams, Slack
 - **Email**: Gmail, Outlook, IMAP
-- **Notes**: OneNote
-- **Future**: Telegram, SMS, Apple Mail, CRMs, etc.
+- **Future**: Telegram, SMS, Apple Mail, Slack, CRMs, etc.
 
 All connectors follow a unified interface pattern, making it easy to add new platforms without modifying core logic.
 
@@ -25,13 +23,9 @@ app/connectors/
 ├── orchestrator.py           # Central coordinator
 ├── example_usage.py          # Usage examples
 ├── implementations/          # Concrete connector implementations
-│   ├── whatsapp_connector.py
-│   ├── teams_connector.py
 │   ├── outlook_connector.py
-│   ├── gmail_connector.py
-│   └── onenote_connector.py
+│   └── gmail_connector.py
 ├── tests/                    # Unit tests
-│   └── test_whatsapp_connector.py
 └── README.md                 # This file
 ```
 
@@ -41,9 +35,9 @@ app/connectors/
 
 Abstract base classes that define the contract for all connectors:
 
-- **`MessageSourceConnector`**: For messaging platforms (WhatsApp, Teams, etc.)
+- **`MessageSourceConnector`**: For messaging platforms (Slack, Telegram, etc.)
 - **`MailSourceConnector`**: For email platforms (Gmail, Outlook, etc.)
-- **`NoteSourceConnector`**: For notes platforms (OneNote, etc.)
+- **`NoteSourceConnector`**: For notes platforms (future support)
 
 ### 2. Unified Data Models (`models.py`)
 
@@ -64,8 +58,8 @@ from app.connectors.registry import get_registry
 from app.connectors.models import SourceType
 
 registry = get_registry()
-registry.register_message_connector(SourceType.WHATSAPP, whatsapp_connector)
-connector = registry.get_message_connector(SourceType.WHATSAPP)
+registry.register_mail_connector(SourceType.GMAIL, gmail_connector)
+connector = registry.get_mail_connector(SourceType.GMAIL)
 ```
 
 ### 4. Unified Services (`services.py`)
@@ -93,7 +87,6 @@ Central coordinator that:
 from app.connectors.registry import get_registry
 from app.connectors.models import SourceType
 from app.connectors.implementations import (
-    WhatsAppConnector,
     GmailConnector,
     OutlookConnector,
 )
@@ -101,9 +94,6 @@ from app.connectors.implementations import (
 registry = get_registry()
 
 # Register connectors
-whatsapp = WhatsAppConnector()
-registry.register_message_connector(SourceType.WHATSAPP, whatsapp)
-
 gmail = GmailConnector()
 registry.register_mail_connector(SourceType.GMAIL, gmail)
 
@@ -145,12 +135,12 @@ inbox_service = UnifiedInboxService()
 # Get messages from all connectors
 messages = await message_service.get_all_messages(limit=50)
 
-# Send a message
-sent_msg = await message_service.send_message(
-    content="Hello!",
-    to_user_id="+1234567890",
-    source_type=SourceType.WHATSAPP,
-)
+# Send a message (example for future messaging connectors)
+# sent_msg = await message_service.send_message(
+#     content="Hello!",
+#     to_user_id="+1234567890",
+#     source_type=SourceType.SLACK,
+# )
 
 # Get emails
 emails = await inbox_service.get_all_emails(unread_only=True)
@@ -164,12 +154,7 @@ results = await inbox_service.search_emails("important")
 Connectors are configured via environment variables:
 
 ```bash
-# WhatsApp
-WHATSAPP_API_TOKEN=your_token
-WHATSAPP_PHONE_NUMBER_ID=your_phone_id
-WHATSAPP_BUSINESS_ACCOUNT_ID=your_business_id
-
-# Microsoft (Teams, Outlook, OneNote)
+# Microsoft (Outlook)
 MS_CLIENT_ID=your_client_id
 MS_CLIENT_SECRET=your_client_secret
 MS_TENANT_ID=your_tenant_id
@@ -181,11 +166,8 @@ EMAIL_IMAP_USERNAME=your_email@gmail.com
 EMAIL_IMAP_PASSWORD=your_app_password
 
 # Enable/Disable connectors
-ENABLE_WHATSAPP=true
-ENABLE_TEAMS=true
 ENABLE_OUTLOOK=true
 ENABLE_GMAIL=true
-ENABLE_ONENOTE=true
 ```
 
 ## 🧪 Testing

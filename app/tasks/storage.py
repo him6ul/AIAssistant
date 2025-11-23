@@ -315,7 +315,7 @@ class TaskStorage:
         Log an ingestion event.
         
         Args:
-            source_type: Type of source (email/onenote)
+            source_type: Type of source (email/manual)
             source_id: Source item ID
             status: Status (success/failure)
             error_message: Error message if failed

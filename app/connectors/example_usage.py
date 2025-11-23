@@ -15,11 +15,8 @@ from app.connectors.registry import get_registry
 from app.connectors.orchestrator import AssistantOrchestrator
 from app.connectors.models import SourceType
 from app.connectors.implementations import (
-    WhatsAppConnector,
-    TeamsConnector,
     OutlookConnector,
     GmailConnector,
-    OneNoteConnector,
 )
 
 # Load environment variables
@@ -36,24 +33,11 @@ async def main():
     # Initialize connectors based on configuration
     # In a real application, this would be driven by config file
     connectors_config = {
-        "whatsapp": os.getenv("ENABLE_WHATSAPP", "false").lower() == "true",
-        "teams": os.getenv("ENABLE_TEAMS", "false").lower() == "true",
         "outlook": os.getenv("ENABLE_OUTLOOK", "false").lower() == "true",
         "gmail": os.getenv("ENABLE_GMAIL", "false").lower() == "true",
-        "onenote": os.getenv("ENABLE_ONENOTE", "false").lower() == "true",
     }
     
     # Register connectors
-    if connectors_config["whatsapp"]:
-        whatsapp = WhatsAppConnector()
-        registry.register_message_connector(SourceType.WHATSAPP, whatsapp)
-        print("✅ Registered WhatsApp connector")
-    
-    if connectors_config["teams"]:
-        teams = TeamsConnector()
-        registry.register_message_connector(SourceType.TEAMS, teams)
-        print("✅ Registered Teams connector")
-    
     if connectors_config["outlook"]:
         outlook = OutlookConnector()
         registry.register_mail_connector(SourceType.OUTLOOK, outlook)
@@ -63,11 +47,6 @@ async def main():
         gmail = GmailConnector()
         registry.register_mail_connector(SourceType.GMAIL, gmail)
         print("✅ Registered Gmail connector")
-    
-    if connectors_config["onenote"]:
-        onenote = OneNoteConnector()
-        registry.register_note_connector(SourceType.ONENOTE, onenote)
-        print("✅ Registered OneNote connector")
     
     print(f"\n📋 Registered {len(registry.get_registered_types())} connector(s)\n")
     
@@ -119,21 +98,6 @@ async def main():
         print(f"   - [{action['priority']}] {action['description']}")
     print()
     
-    # Example 6: Send a message (if WhatsApp is enabled)
-    if connectors_config["whatsapp"]:
-        print("💬 Example: Sending WhatsApp message...")
-        try:
-            # This would send a real message - commented out for safety
-            # sent_msg = await orchestrator.message_service.send_message(
-            #     content="Hello from AI Assistant!",
-            #     to_user_id="+1234567890",
-            #     source_type=SourceType.WHATSAPP,
-            # )
-            # print(f"   ✅ Sent message: {sent_msg.id}")
-            print("   (Skipped - uncomment to actually send)")
-        except Exception as e:
-            print(f"   ❌ Error: {e}")
-        print()
     
     # Shutdown
     print("🛑 Shutting down...")

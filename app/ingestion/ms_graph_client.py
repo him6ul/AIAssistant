@@ -110,17 +110,18 @@ class MSGraphClient:
         """
         Acquire access token using client credentials (app-only).
         
+        For client credentials flow, the scope must be in the format:
+        https://graph.microsoft.com/.default
+        
         Args:
-            scopes: OAuth scopes
+            scopes: OAuth scopes (defaults to .default for client credentials)
         
         Returns:
             Token response
         """
         if scopes is None:
-            scopes = [
-                "https://graph.microsoft.com/Mail.Read",
-                "https://graph.microsoft.com/Notes.Read"
-            ]
+            # Client credentials flow requires .default scope format
+            scopes = ["https://graph.microsoft.com/.default"]
         
         result = self.app.acquire_token_for_client(scopes=scopes)
         
@@ -145,7 +146,10 @@ class MSGraphClient:
         # Check if token is expired or missing
         if not self._access_token or (self._token_expires_at and time.time() >= self._token_expires_at - 60):
             logger.info("Token expired or missing, acquiring new token")
-            self.acquire_token_client_credentials()
+            result = self.acquire_token_client_credentials()
+            if "access_token" not in result:
+                logger.error("Failed to acquire access token")
+                return None
         
         return self._access_token
     

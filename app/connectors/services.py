@@ -28,7 +28,7 @@ class UnifiedMessageService:
     """
     Unified service for accessing messages from all messaging connectors.
     
-    This service aggregates messages from WhatsApp, Teams, Slack, etc.
+    This service aggregates messages from Slack, Telegram, SMS, etc.
     and provides a single interface to access them.
     """
     
