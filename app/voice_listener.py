@@ -163,38 +163,47 @@ class VoiceListener:
         """
         Handle stop command - interrupt TTS and shut down gracefully.
         """
-        logger.info("Stop command detected - shutting down voice listener")
+        logger.info("🛑 Stop command detected - shutting down voice listener")
         
-        # Stop any ongoing TTS immediately
-        try:
-            self.tts_engine.stop_speaking()
-            logger.info("Stopped ongoing TTS")
-        except Exception as e:
-            logger.warning(f"Error stopping TTS: {e}")
-        
-        # Set listening flag to False immediately to stop the loop
+        # Set listening flag to False FIRST to stop all loops immediately
         self._listening = False
         logger.info("Set _listening flag to False")
+        
+        # Stop any ongoing TTS immediately (this is critical)
+        try:
+            logger.info("Attempting to stop ongoing TTS...")
+            self.tts_engine.stop_speaking()
+            logger.info("✅ Stopped ongoing TTS")
+        except Exception as e:
+            logger.warning(f"Error stopping TTS: {e}", exc_info=True)
+        
+        # Small delay to ensure TTS actually stops
+        await asyncio.sleep(0.2)
         
         # Get user name from environment or use default
         user_name = os.getenv("USER_NAME", "Himanshu")
         goodbye_message = f"Goodbye {user_name}"
         
-        # Run TTS in executor to avoid blocking async event loop
-        # Ensure wait=True so it completes before we stop
-        loop = asyncio.get_event_loop()
-        logger.info(f"Speaking goodbye message: {goodbye_message}")
-        result = await loop.run_in_executor(None, self.tts_engine.speak, goodbye_message, True)
-        
-        if result:
-            logger.info("Goodbye message spoken successfully")
-        else:
-            logger.warning("Goodbye message may not have been spoken")
+        # Try to speak goodbye message (but don't wait too long)
+        try:
+            loop = asyncio.get_event_loop()
+            logger.info(f"Speaking goodbye message: {goodbye_message}")
+            # Use asyncio.wait_for to prevent hanging
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, self.tts_engine.speak, goodbye_message, True),
+                timeout=3.0
+            )
+            if result:
+                logger.info("Goodbye message spoken successfully")
+        except asyncio.TimeoutError:
+            logger.warning("Goodbye message timed out - proceeding with shutdown")
+        except Exception as e:
+            logger.warning(f"Error speaking goodbye: {e}")
         
         # Stop the listener and clean up resources
         logger.info("Calling stop() method to clean up resources...")
         self.stop()
-        logger.info("Voice listener stop() completed - exiting")
+        logger.info("✅ Voice listener stop() completed - exiting")
     
     async def _listen_for_stop_during_tts(self):
         """
@@ -240,11 +249,17 @@ class VoiceListener:
                             stop_keywords = get_stop_words()
                             
                             # Check if any stop keyword is in the transcribed text
-                            is_stop = any(keyword in text_lower for keyword in stop_keywords)
+                            # Check multiple ways: contains, starts with, ends with
+                            is_stop = any(
+                                keyword in text_lower or 
+                                text_lower.startswith(keyword) or 
+                                text_lower.endswith(keyword)
+                                for keyword in stop_keywords
+                            )
                             
                             if is_stop:
                                 matched_keywords = [kw for kw in stop_keywords if kw in text_lower]
-                                logger.info(f"Stop command detected during TTS: '{text}' (matched: {matched_keywords})")
+                                logger.info(f"🛑 Stop command detected during TTS: '{text}' (matched: {matched_keywords})")
                                 await self._handle_stop_command()
                                 break
                 
@@ -279,24 +294,44 @@ class VoiceListener:
             )
             
             if not text:
-                logger.warning("No transcription result")
+                logger.warning("⚠️ No transcription result - audio may be too short or unclear")
+                # Try to give user feedback
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self.tts_engine.speak, "I didn't catch that. Could you repeat?")
                 return
             
-            logger.info(f"Transcribed: {text}")
+            text = text.strip()
+            if len(text) < 3:
+                logger.warning(f"⚠️ Transcription too short: '{text}' - may be incomplete")
+            
+            logger.info(f"✅ Transcribed ({len(text)} chars): '{text}'")
             
             # Check for stop command first (before any other processing)
             text_lower = text.lower().strip()
             stop_keywords = get_stop_words()
             
             # Check for stop keywords more aggressively
-            is_stop_command = any(keyword in text_lower for keyword in stop_keywords)
+            # Also check if text starts with or contains stop words
+            is_stop_command = any(
+                keyword in text_lower or 
+                text_lower.startswith(keyword) or 
+                text_lower.endswith(keyword)
+                for keyword in stop_keywords
+            )
             
             if is_stop_command:
+                matched_keywords = [kw for kw in stop_keywords if kw in text_lower]
+                logger.info(f"🛑 Stop command detected in transcription: '{text}' (matched: {matched_keywords})")
                 await self._handle_stop_command()
                 return
             
             # First, repeat the command back to confirm understanding
-            confirmation = f"I heard: {text}. Let me help you with that."
+            # Only confirm if transcription seems complete (more than a few words)
+            if len(text.split()) > 2:
+                confirmation = f"I heard: {text}. Let me help you with that."
+            else:
+                # If transcription is very short, ask for clarification
+                confirmation = f"I heard: {text}. Is that correct?"
             logger.info(f"Confirming command: {confirmation}")
             # Run TTS in executor to avoid blocking async event loop
             # But also continue listening for stop commands in parallel
@@ -317,15 +352,17 @@ class VoiceListener:
             await asyncio.sleep(0.3)
             
             # Try command handler first (for weather, time, etc.)
+            logger.info(f"Attempting to process command with command handler: '{text}'")
             command_handler = get_command_handler()
             command_response = await command_handler.process(text)
             
             if command_response.handled:
                 # Command was handled by a command handler (e.g., weather with auto-location)
                 content = command_response.response
-                logger.info(f"Command handled by {command_response.command_type}, response (length: {len(content)} chars): {content}")
+                logger.info(f"✅ Command handled by {command_response.command_type}, response (length: {len(content)} chars): {content}")
             else:
                 # Fall back to LLM for complex queries
+                logger.info(f"Command not handled by any handler, using LLM: '{text}'")
                 response = await self.llm_router.generate(
                     prompt=text,
                     system_prompt="You are a helpful personal assistant. Be concise and actionable."
@@ -401,19 +438,86 @@ class VoiceListener:
                     
                     if keyword_index >= 0:
                         logger.info("Wake word detected!")
-                        self.tts_engine.speak("Yes, how can I help?")
                         
-                        # Record command (simplified - in production, use proper VAD)
-                        await asyncio.sleep(1)  # Brief pause
+                        # Speak response and WAIT for it to complete
+                        loop = asyncio.get_event_loop()
+                        logger.info("Speaking wake word response...")
+                        await loop.run_in_executor(None, self.tts_engine.speak, "Yes, how can I help?", True)
+                        logger.info("Wake word response completed")
                         
-                        # Record for a few seconds
+                        # Wait additional time to ensure audio system settles and user starts speaking
+                        await asyncio.sleep(0.8)  # Brief pause for user to start speaking
+                        
+                        # Record command with Voice Activity Detection (simple energy-based)
+                        logger.info("Recording voice command (waiting for speech)...")
                         audio_frames = []
-                        for _ in range(50):  # ~3 seconds at 16kHz
-                            frame = self.audio_stream.read(512, exception_on_overflow=False)
-                            audio_frames.append(frame)
-                            await asyncio.sleep(0.06)
+                        
+                        # Simple VAD: detect when user starts speaking (energy threshold)
+                        silence_frames = 0
+                        max_silence_frames = 30  # ~1 second of silence before stopping
+                        speech_detected = False
+                        max_recording_frames = 200  # ~6.5 seconds max
+                        energy_threshold = 500  # Adjust based on testing
+                        
+                        # Skip initial frames that might contain TTS echo
+                        skip_initial_frames = 20  # Skip first ~0.6 seconds
+                        for _ in range(skip_initial_frames):
+                            try:
+                                frame = self.audio_stream.read(512, exception_on_overflow=False)
+                                await asyncio.sleep(0.032)
+                            except Exception as e:
+                                logger.warning(f"Error skipping initial frames: {e}")
+                                break
+                        
+                        # Now record with VAD
+                        for i in range(max_recording_frames):
+                            try:
+                                frame = self.audio_stream.read(512, exception_on_overflow=False)
+                                
+                                # Calculate frame energy (simple VAD)
+                                if len(frame) >= 2:
+                                    # Convert bytes to samples and calculate RMS energy
+                                    samples = struct.unpack(f'{len(frame)//2}h', frame)
+                                    energy = sum(abs(s) for s in samples) / len(samples) if samples else 0
+                                    
+                                    if energy > energy_threshold:
+                                        speech_detected = True
+                                        silence_frames = 0
+                                        audio_frames.append(frame)
+                                    elif speech_detected:
+                                        # Speech was detected, now check for silence
+                                        audio_frames.append(frame)  # Still record during brief pauses
+                                        silence_frames += 1
+                                        if silence_frames >= max_silence_frames:
+                                            logger.info(f"Silence detected after speech, stopping recording (frame {i})")
+                                            break
+                                    else:
+                                        # No speech detected yet, keep waiting
+                                        silence_frames += 1
+                                        if silence_frames < 10:  # Allow brief initial silence
+                                            audio_frames.append(frame)
+                                        # If too much silence at start, might be background noise
+                                
+                                await asyncio.sleep(0.032)  # ~31 frames per second
+                            except Exception as e:
+                                logger.warning(f"Error reading audio frame {i}: {e}")
+                                break
+                        
+                        if not audio_frames:
+                            logger.warning("No audio frames recorded")
+                            await loop.run_in_executor(None, self.tts_engine.speak, "I didn't hear anything. Could you repeat?", True)
+                            continue
                         
                         audio_data = b''.join(audio_frames)
+                        logger.info(f"Recorded {len(audio_frames)} frames ({len(audio_data)} bytes) of audio")
+                        
+                        # Calculate audio duration for logging
+                        duration_seconds = len(audio_data) / (self.sample_rate * self.channels * self.sample_width)
+                        logger.info(f"Audio duration: {duration_seconds:.2f} seconds")
+                        
+                        if duration_seconds < 0.1:
+                            logger.warning(f"Audio too short ({duration_seconds:.2f}s), may not transcribe well")
+                        
                         await self._process_voice_command(audio_data)
                 
                 else:

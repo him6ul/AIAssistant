@@ -102,11 +102,23 @@ class STTEngine:
         Args:
             audio_file_path: Path to audio file
             language: Language code (optional, e.g., 'en', 'en-US', 'en-GB', 'hi')
-                      If None, uses STT_LANGUAGE from .env or auto-detects
         
         Returns:
             Transcribed text or None if failed
         """
+        logger.debug(f"Transcribing audio file: {audio_file_path}")
+        
+        if not os.path.exists(audio_file_path):
+            logger.error(f"Audio file not found: {audio_file_path}")
+            return None
+        
+        file_size = os.path.getsize(audio_file_path)
+        logger.debug(f"Audio file size: {file_size} bytes")
+        
+        if file_size < 1000:  # Less than 1KB is likely too small
+            logger.warning(f"Audio file too small: {file_size} bytes")
+            return None
+        
         # Get language codes from configuration (supports multiple, comma-separated)
         # Note: OpenAI Whisper API only accepts ISO-639-1 base language codes (e.g., 'en', 'hi')
         # Region codes (e.g., 'en-US', 'en-IN') are converted to base codes
@@ -225,6 +237,14 @@ class STTEngine:
         Returns:
             Transcribed text or None if failed
         """
+        logger.info(f"Transcribing audio bytes: {len(audio_bytes)} bytes, sample_rate={sample_rate}, channels={channels}, sample_width={sample_width}")
+        
+        # Check if audio is too short (less than 0.1 seconds at 16kHz, 16-bit mono = 3200 bytes)
+        min_audio_size = sample_rate * sample_width * channels * 0.1  # 0.1 seconds minimum
+        if len(audio_bytes) < min_audio_size:
+            logger.warning(f"Audio too short: {len(audio_bytes)} bytes (minimum: {min_audio_size:.0f} bytes for 0.1s)")
+            return None
+        
         # Note: language parsing and fallback is handled in transcribe() method
         # We pass language=None here to let transcribe() handle STT_LANGUAGE parsing
         # This ensures the fallback mechanism works correctly
@@ -237,8 +257,20 @@ class STTEngine:
                     wav_file.setframerate(sample_rate)
                     wav_file.writeframes(audio_bytes)
                 
+                logger.debug(f"Created temporary WAV file: {tmp_file.name} ({os.path.getsize(tmp_file.name)} bytes)")
+                
                 # Pass language=None to let transcribe() handle STT_LANGUAGE parsing and fallback
-                return await self.transcribe(tmp_file.name, language)
+                result = await self.transcribe(tmp_file.name, language)
+                
+                if result:
+                    logger.info(f"Transcription successful: '{result[:100]}...' ({len(result)} chars)" if len(result) > 100 else f"Transcription successful: '{result}' ({len(result)} chars)")
+                else:
+                    logger.warning("Transcription returned None or empty string")
+                
+                return result
+            except Exception as e:
+                logger.error(f"Error in transcribe_bytes: {e}", exc_info=True)
+                return None
             finally:
                 if os.path.exists(tmp_file.name):
                     os.unlink(tmp_file.name)

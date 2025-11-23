@@ -53,22 +53,30 @@ class ReminderScheduler:
                 if task.id in self._reminded_tasks:
                     continue
                 
+                # Validate task has required fields before creating reminder
+                if not task.title or not task.title.strip():
+                    logger.warning(f"Skipping task {task.id}: missing or empty title")
+                    continue
+                
                 try:
-                    # Create reminder
+                    # Create reminder (only pass valid data)
+                    reminder_body = task.description if task.description else ""
+                    reminder_due_date = task.due_date if task.due_date else None
+                    
                     await self.action_executor.create_reminder(
-                        title=task.title,
-                        body=task.description or "",
-                        due_date=task.due_date
+                        title=task.title.strip(),
+                        body=reminder_body,
+                        due_date=reminder_due_date
                     )
                     
                     self._reminded_tasks.add(task.id)
                     logger.info(f"Created reminder for task: {task.title}")
                 
                 except Exception as e:
-                    logger.error(f"Failed to create reminder for task {task.id}: {e}")
+                    logger.error(f"Failed to create reminder for task {task.id}: {e}", exc_info=True)
         
         except Exception as e:
-            logger.error(f"Reminder check failed: {e}")
+            logger.error(f"Reminder check failed: {e}", exc_info=True)
     
     async def start(self):
         """

@@ -2,6 +2,7 @@
 Office 365 email ingestion via Microsoft Graph API.
 """
 
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from app.ingestion.ms_graph_client import get_graph_client
@@ -64,7 +65,19 @@ class EmailO365Ingestor:
             List of message objects
         """
         try:
-            endpoint = f"/me/mailFolders/{folder}/messages"
+            # Use /users/{userPrincipalName} endpoint for app-only authentication
+            # Fall back to /me if user principal not available (for delegated auth)
+            user_principal = os.getenv("MS_USER_PRINCIPAL_NAME")
+            
+            if user_principal:
+                # App-only authentication - use /users/{userPrincipalName}
+                endpoint = f"/users/{user_principal}/mailFolders/{folder}/messages"
+                logger.debug(f"Using app-only auth endpoint: {endpoint}")
+            else:
+                # Delegated authentication - use /me
+                endpoint = f"/me/mailFolders/{folder}/messages"
+                logger.debug(f"Using delegated auth endpoint: {endpoint}")
+            
             params = {
                 "$top": max_results,
                 "$select": "id,subject,bodyPreview,body,from,receivedDateTime,isRead,flag,importance"
@@ -92,9 +105,21 @@ class EmailO365Ingestor:
             Message content dict
         """
         try:
+            # Use /users/{userPrincipalName} endpoint for app-only authentication
+            user_principal = os.getenv("MS_USER_PRINCIPAL_NAME")
+            
+            if user_principal:
+                # App-only authentication
+                endpoint = f"/users/{user_principal}/messages/{message_id}"
+                logger.debug(f"Using app-only auth endpoint: {endpoint}")
+            else:
+                # Delegated authentication
+                endpoint = f"/me/messages/{message_id}"
+                logger.debug(f"Using delegated auth endpoint: {endpoint}")
+            
             response = await self.graph_client.make_request(
                 "GET",
-                f"/me/messages/{message_id}",
+                endpoint,
                 params={
                     "$select": "id,subject,body,bodyPreview,from,receivedDateTime,isRead,flag,importance,toRecipients,ccRecipients"
                 }

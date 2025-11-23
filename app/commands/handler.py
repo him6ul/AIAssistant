@@ -43,12 +43,17 @@ class CommandHandler:
             )
         
         # Try each handler
+        logger.debug(f"Processing command: '{text}'")
         for handler in self.handlers:
+            logger.debug(f"Checking if {handler.__class__.__name__} can handle: '{text}'")
             if handler.can_handle(text):
-                logger.info(f"Command handled by {handler.__class__.__name__}")
+                logger.info(f"✅ Command handled by {handler.__class__.__name__}")
                 return await handler.handle(text)
+            else:
+                logger.debug(f"❌ {handler.__class__.__name__} cannot handle: '{text}'")
         
         # No handler matched
+        logger.info(f"⚠️  No handler matched command: '{text}'")
         return CommandResponse(
             handled=False,
             response="",

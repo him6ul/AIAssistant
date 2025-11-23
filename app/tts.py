@@ -118,30 +118,52 @@ class TTSEngine:
         """
         Stop any ongoing speech immediately.
         """
-        with self._speak_lock:
+        logger.info("🛑 stop_speaking() called - interrupting TTS")
+        
+        # Try to acquire lock, but don't block if TTS is currently speaking
+        lock_acquired = False
+        try:
+            lock_acquired = self._speak_lock.acquire(blocking=False)
+            if not lock_acquired:
+                logger.warning("TTS lock is held, attempting to stop anyway...")
+        except Exception as e:
+            logger.warning(f"Error acquiring TTS lock: {e}")
+        
+        try:
             # Stop macOS say command if running
             if self._current_speak_process:
                 try:
                     logger.info("Stopping TTS (interrupting 'say' command)")
+                    # First try terminate (graceful)
                     self._current_speak_process.terminate()
                     # Give it a moment to terminate gracefully
                     try:
-                        self._current_speak_process.wait(timeout=0.5)
+                        self._current_speak_process.wait(timeout=0.3)
+                        logger.info("✅ 'say' command terminated gracefully")
                     except subprocess.TimeoutExpired:
-                        # Force kill if it doesn't terminate
+                        # Force kill if it doesn't terminate quickly
+                        logger.warning("'say' command didn't terminate, force killing...")
                         self._current_speak_process.kill()
                         self._current_speak_process.wait()
+                        logger.info("✅ 'say' command force killed")
                 except Exception as e:
-                    logger.warning(f"Error stopping TTS process: {e}")
+                    logger.warning(f"Error stopping TTS process: {e}", exc_info=True)
                 finally:
                     self._current_speak_process = None
             
             # Stop pyttsx3 if running
             if self.engine:
                 try:
+                    logger.info("Stopping pyttsx3 engine...")
                     self.engine.stop()
-                except:
-                    pass
+                    logger.info("✅ pyttsx3 engine stopped")
+                except Exception as e:
+                    logger.warning(f"Error stopping pyttsx3: {e}")
+        finally:
+            if lock_acquired:
+                self._speak_lock.release()
+        
+        logger.info("✅ stop_speaking() completed")
     
     def speak(self, text: str, wait: bool = True) -> bool:
         """

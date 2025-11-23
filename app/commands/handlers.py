@@ -56,9 +56,41 @@ class WeatherHandler:
     
     def can_handle(self, text: str) -> bool:
         """Check if this handler can process the command."""
-        text_lower = text.lower()
-        weather_keywords = ["weather", "temperature", "temp", "forecast", "rain", "sunny", "cloudy"]
-        return any(keyword in text_lower for keyword in weather_keywords)
+        text_lower = text.lower().strip()
+        
+        # Expanded weather keywords and phrases
+        weather_keywords = [
+            "weather", "temperature", "temp", "forecast", "rain", "sunny", "cloudy",
+            "outside", "outdoor", "climate", "conditions", "how's the weather",
+            "what's the weather", "what is the weather", "weather outside",
+            "weather today", "current weather", "weather now", "weather report"
+        ]
+        
+        # Check for weather-related phrases
+        weather_phrases = [
+            "what is the weather",
+            "what's the weather",
+            "how's the weather",
+            "weather outside",
+            "weather today",
+            "current weather",
+            "weather now"
+        ]
+        
+        # Check for phrases first (more specific)
+        for phrase in weather_phrases:
+            if phrase in text_lower:
+                logger.info(f"Weather handler matched phrase: '{phrase}' in '{text}'")
+                return True
+        
+        # Then check for keywords
+        matched_keywords = [kw for kw in weather_keywords if kw in text_lower]
+        if matched_keywords:
+            logger.info(f"Weather handler matched keywords: {matched_keywords} in '{text}'")
+            return True
+        
+        logger.debug(f"Weather handler did not match: '{text}'")
+        return False
     
     async def handle(self, text: str) -> CommandResponse:
         """Handle weather command."""
@@ -141,19 +173,28 @@ class WeatherHandler:
     
     def _extract_location(self, text: str) -> Optional[str]:
         """Extract location from text."""
-        # Simple pattern matching - can be improved
+        text_lower = text.lower()
+        
+        # Expanded patterns to catch more location mentions
         patterns = [
-            r"weather in (.+?)(?:\.|$|\?)",
-            r"weather at (.+?)(?:\.|$|\?)",
-            r"weather for (.+?)(?:\.|$|\?)",
-            r"temperature in (.+?)(?:\.|$|\?)",
+            r"weather in (.+?)(?:\.|$|\?|outside|today)",
+            r"weather at (.+?)(?:\.|$|\?|outside|today)",
+            r"weather for (.+?)(?:\.|$|\?|outside|today)",
+            r"temperature in (.+?)(?:\.|$|\?|outside|today)",
+            r"weather (.+?)(?:\.|$|\?|outside|today)",
+            r"in (.+?)(?:\.|$|\?|outside|today)",
         ]
         
         for pattern in patterns:
-            match = re.search(pattern, text.lower())
+            match = re.search(pattern, text_lower)
             if match:
-                return match.group(1).strip()
+                location = match.group(1).strip()
+                # Filter out common non-location words
+                if location and location not in ["outside", "today", "now", "here", "there"]:
+                    logger.info(f"Extracted location from text: '{location}'")
+                    return location
         
+        logger.debug(f"No location extracted from: '{text}'")
         return None
 
 
