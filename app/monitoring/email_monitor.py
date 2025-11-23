@@ -149,9 +149,10 @@ class EmailNotificationMonitor:
             logger.info(f"Checking for emails since {since.isoformat()} (last {self.lookback_minutes} minutes)")
             
             # Fetch emails from Gmail and Outlook
+            # Check both unread and read emails to catch important ones
             emails = await self.orchestrator.get_all_emails(
                 source_types=[SourceType.GMAIL, SourceType.OUTLOOK],
-                unread_only=True,
+                unread_only=False,  # Check all emails, not just unread
                 limit=50
             )
             

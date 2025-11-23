@@ -9,7 +9,7 @@ from email.header import decode_header
 from typing import List, Optional, Callable, Dict, Any
 from datetime import datetime
 from app.connectors.base import MailSourceConnector, ConnectorCapabilities
-from app.connectors.models import UnifiedEmail, SourceType
+from app.connectors.models import UnifiedEmail, SourceType, EmailPriority
 from app.connectors.middleware import with_retry, RetryConfig, with_error_boundary, with_logging
 from app.utils.logger import get_logger
 import asyncio
@@ -122,12 +122,17 @@ class GmailConnector(MailSourceConnector):
             await loop.run_in_executor(None, lambda: self._imap.select(folder_name))
             
             # Build search criteria
+            # For Gmail, we can search by date more precisely
             search_criteria = []
             if unread_only:
                 search_criteria.append("UNSEEN")
             if since:
+                # IMAP SINCE uses date only, but we can filter by time after fetching
+                # Use SINCE for date filtering
                 search_criteria.append(f'SINCE {since.strftime("%d-%b-%Y")}')
             
+            # Gmail supports searching for important emails using the \Important flag
+            # But we'll fetch all and filter by importance after parsing headers
             search_query = " ".join(search_criteria) if search_criteria else "ALL"
             
             # Search for emails
@@ -143,18 +148,31 @@ class GmailConnector(MailSourceConnector):
             # Get email IDs
             email_ids = messages[0].split()[:limit]
             
-            # Fetch emails
+            # Fetch emails with flags to check for IMPORTANT flag
             unified_emails = []
             for email_id in email_ids:
                 try:
+                    # Fetch both the email and its flags
                     status, msg_data = await loop.run_in_executor(
                         None,
-                        lambda eid=email_id: self._imap.fetch(eid, "(RFC822)")
+                        lambda eid=email_id: self._imap.fetch(eid, "(RFC822 FLAGS)")
                     )
                     
                     if status == "OK" and msg_data[0]:
                         raw_email = msg_data[0][1]
                         email_message = email.message_from_bytes(raw_email)
+                        
+                        # Check flags for \Important
+                        flags_str = ""
+                        if len(msg_data[0]) > 1:
+                            flags_data = msg_data[0][1] if isinstance(msg_data[0][1], bytes) else str(msg_data[0][1])
+                            if b"FLAGS" in flags_data or "FLAGS" in str(flags_data):
+                                # Extract flags
+                                flags_part = msg_data[0][0].decode() if isinstance(msg_data[0][0], bytes) else str(msg_data[0][0])
+                                if "\\Important" in flags_part or "IMPORTANT" in flags_part.upper():
+                                    # Mark as important in raw data
+                                    email_message["X-IMAP-Important"] = "true"
+                        
                         unified_email = self._convert_imap_email(email_message, email_id.decode())
                         unified_emails.append(unified_email)
                 except Exception as e:
@@ -356,6 +374,31 @@ class GmailConnector(MailSourceConnector):
         for addr in email.utils.getaddresses(email_message.get_all("Cc", [])):
             cc_addresses.append({"email": addr[1], "name": addr[0]})
         
+        # Check for importance/priority
+        # Gmail uses X-Gmail-Labels which may contain "Important"
+        gmail_labels = email_message.get("X-Gmail-Labels", "")
+        is_important = "Important" in gmail_labels or "\\Important" in gmail_labels
+        
+        # Also check X-Priority header (1 = high, 3 = normal, 5 = low)
+        x_priority = email_message.get("X-Priority", "")
+        priority_value = EmailPriority.NORMAL
+        if x_priority:
+            try:
+                priority_num = int(x_priority)
+                if priority_num == 1:
+                    priority_value = EmailPriority.HIGH
+                    is_important = True
+                elif priority_num == 5:
+                    priority_value = EmailPriority.LOW
+            except:
+                pass
+        
+        # Check Importance header (some clients use this)
+        importance_header = email_message.get("Importance", "").lower()
+        if importance_header in ["high", "urgent"]:
+            priority_value = EmailPriority.HIGH
+            is_important = True
+        
         return UnifiedEmail(
             id=f"gmail_{email_id}",
             source_type=SourceType.GMAIL,
@@ -367,7 +410,9 @@ class GmailConnector(MailSourceConnector):
             to_addresses=to_addresses,
             cc_addresses=cc_addresses,
             timestamp=timestamp,
-            is_read="UNSEEN" not in email_message.get("X-Gmail-Labels", ""),
+            is_read="UNSEEN" not in gmail_labels,
+            is_important=is_important,
+            priority=priority_value,
             raw_data={"headers": dict(email_message.items())},
         )
 
