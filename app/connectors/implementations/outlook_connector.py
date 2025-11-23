@@ -6,7 +6,7 @@ import os
 from typing import List, Optional, Callable, Dict, Any
 from datetime import datetime
 from app.connectors.base import MailSourceConnector, ConnectorCapabilities
-from app.connectors.models import UnifiedEmail, SourceType
+from app.connectors.models import UnifiedEmail, SourceType, EmailPriority
 from app.connectors.middleware import with_retry, RetryConfig, with_error_boundary, with_logging
 from app.ingestion.ms_graph_client import MSGraphClient
 from app.utils.logger import get_logger
@@ -121,20 +121,23 @@ class OutlookConnector(MailSourceConnector):
             query_params = {
                 "$top": limit,
                 "$orderby": "receivedDateTime desc",
+                "$select": "id,subject,bodyPreview,body,from,receivedDateTime,isRead,flag,importance,toRecipients,ccRecipients"
             }
             if filters:
                 query_params["$filter"] = " and ".join(filters)
             
-            # Use existing email ingestor logic if available
-            # For now, stub implementation
-            logger.warning("Outlook fetch_emails is a stub - implement with actual Graph API")
+            # Fetch emails from Graph API
+            response = await self._graph_client.make_request("GET", endpoint, params=query_params)
+            messages = response.get("value", [])
             
-            # Example:
-            # response = await self._graph_client.get(endpoint, params=query_params)
-            # emails = response.get('value', [])
-            # return [self._convert_outlook_email(email) for email in emails]
+            # Convert to UnifiedEmail objects
+            unified_emails = []
+            for msg in messages:
+                unified_email = self._convert_outlook_email(msg)
+                unified_emails.append(unified_email)
             
-            return []
+            logger.info(f"Fetched {len(unified_emails)} emails from Outlook")
+            return unified_emails
         except Exception as e:
             logger.error(f"Error fetching Outlook emails: {e}")
             return []
@@ -323,24 +326,74 @@ class OutlookConnector(MailSourceConnector):
         
         This is a helper method to normalize Outlook-specific data.
         """
-        # This would contain the actual conversion logic
+        # Extract body content - prefer bodyPreview if body is not available
+        body_content = ""
+        body_html = None
+        
+        if 'body' in outlook_email and outlook_email['body']:
+            body_content = outlook_email['body'].get('content', '')
+            if outlook_email['body'].get('contentType') == 'html':
+                body_html = body_content
+        elif 'bodyPreview' in outlook_email:
+            body_content = outlook_email['bodyPreview']
+        
+        # Extract from address
+        from_addr = outlook_email.get('from', {})
+        if isinstance(from_addr, dict):
+            email_addr = from_addr.get('emailAddress', {})
+            from_email = email_addr.get('address', '')
+            from_name = email_addr.get('name', '')
+        else:
+            from_email = str(from_addr)
+            from_name = ''
+        
+        # Extract to addresses
+        to_addresses = []
+        for addr in outlook_email.get('toRecipients', []):
+            if isinstance(addr, dict):
+                email_addr = addr.get('emailAddress', {})
+                to_addresses.append({
+                    "email": email_addr.get('address', ''),
+                    "name": email_addr.get('name', '')
+                })
+        
+        # Parse timestamp
+        try:
+            received_dt = datetime.fromisoformat(
+                outlook_email.get('receivedDateTime', '').replace('Z', '+00:00')
+            )
+        except (ValueError, AttributeError):
+            received_dt = datetime.utcnow()
+        
+        # Determine importance
+        importance = outlook_email.get('importance', 'normal')
+        is_important = importance in ['high', 'urgent'] or outlook_email.get('flag', {}).get('flagStatus') == 'flagged'
+        
+        # Determine priority
+        from app.connectors.models import EmailPriority
+        priority_map = {
+            'low': EmailPriority.LOW,
+            'normal': EmailPriority.NORMAL,
+            'high': EmailPriority.HIGH
+        }
+        priority = priority_map.get(importance, EmailPriority.NORMAL)
+        
         return UnifiedEmail(
             id=f"outlook_{outlook_email.get('id', 'unknown')}",
             source_type=SourceType.OUTLOOK,
             source_id=outlook_email.get('id', 'unknown'),
             subject=outlook_email.get('subject', ''),
-            body_text=outlook_email.get('body', {}).get('content', ''),
-            body_html=outlook_email.get('body', {}).get('content', '') if outlook_email.get('body', {}).get('contentType') == 'html' else None,
+            body_text=body_content,
+            body_html=body_html,
             from_address={
-                "email": outlook_email.get('from', {}).get('emailAddress', {}).get('address'),
-                "name": outlook_email.get('from', {}).get('emailAddress', {}).get('name'),
+                "email": from_email,
+                "name": from_name,
             },
-            to_addresses=[
-                {"email": addr.get('emailAddress', {}).get('address')}
-                for addr in outlook_email.get('toRecipients', [])
-            ],
-            timestamp=datetime.fromisoformat(outlook_email.get('receivedDateTime', datetime.utcnow().isoformat())),
+            to_addresses=to_addresses,
+            timestamp=received_dt,
             is_read=outlook_email.get('isRead', False),
+            is_important=is_important,
+            priority=priority,
             folder=outlook_email.get('parentFolderId'),
             raw_data=outlook_email,
         )

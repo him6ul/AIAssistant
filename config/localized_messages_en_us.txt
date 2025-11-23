@@ -1,0 +1,25 @@
+# Localized Messages for AI Assistant (en-US)
+# Format: KEY=value
+
+# Email Notification
+EMAIL_NOTIFICATION_PREFIX=Hey {user_name}, this is Jarvis. There is an important email.
+EMAIL_NOTIFICATION_SUBJECT=Subject: {subject}
+EMAIL_NOTIFICATION_FROM=From: {sender}
+EMAIL_NOTIFICATION_MULTIPLE=There are {count} important emails.
+
+# Greetings
+GREETING_MORNING=Good morning {user_name}
+GREETING_AFTERNOON=Good afternoon {user_name}
+GREETING_EVENING=Good evening {user_name}
+
+# Goodbye
+GOODBYE=Goodbye {user_name}
+
+# Errors
+ERROR_CONNECTION_FAILED=Failed to connect to {service}
+ERROR_EMAIL_FETCH=Failed to fetch emails from {source}
+
+# Status
+STATUS_CONNECTED=Connected to {service}
+STATUS_DISCONNECTED=Disconnected from {service}
+

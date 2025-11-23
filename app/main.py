@@ -14,7 +14,6 @@ from app.utils.logger import setup_logger, get_logger
 from app.network import get_network_monitor
 from app.tasks.storage import get_task_storage
 from app.scheduler.email_scheduler import EmailScheduler
-from app.scheduler.onenote_scheduler import OneNoteScheduler
 from app.scheduler.reminder_scheduler import ReminderScheduler
 # Connector loader is optional - can be enabled when connectors are configured
 try:
@@ -81,19 +80,37 @@ async def initialize_services():
         o365_config=email_config
     )
     
-    onenote_scheduler = OneNoteScheduler(
-        interval_seconds=config.get("scheduler", {}).get("onenote_worker_interval", 1800)
-    )
-    
     reminder_scheduler = ReminderScheduler(
         interval_seconds=config.get("scheduler", {}).get("reminder_check_interval", 60)
     )
     
     # Start schedulers
     asyncio.create_task(email_scheduler.start())
-    asyncio.create_task(onenote_scheduler.start())
     asyncio.create_task(reminder_scheduler.start())
     logger.info("Schedulers started")
+    
+    # Initialize email notification monitor (if connectors are available)
+    if CONNECTORS_AVAILABLE:
+        try:
+            from app.monitoring.email_monitor import EmailNotificationMonitor
+            
+            # Check if Gmail or Outlook are enabled
+            enable_gmail = os.getenv("ENABLE_GMAIL", "false").lower() == "true"
+            enable_outlook = os.getenv("ENABLE_OUTLOOK", "false").lower() == "true"
+            
+            if enable_gmail or enable_outlook:
+                email_monitor = EmailNotificationMonitor(
+                    check_interval_seconds=300,  # 5 minutes
+                    lookback_minutes=5
+                )
+                asyncio.create_task(email_monitor.start())
+                logger.info("Email notification monitor started")
+            else:
+                logger.info("Email notification monitor skipped (Gmail and Outlook not enabled)")
+        except ImportError as e:
+            logger.warning(f"Email notification monitor not available: {e}")
+        except Exception as e:
+            logger.error(f"Failed to start email notification monitor: {e}", exc_info=True)
     
     # Initialize voice listener (optional, can be started separately)
     voice_enabled = os.getenv("VOICE_ENABLED", "false").lower() == "true"

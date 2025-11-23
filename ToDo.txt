@@ -1,10 +1,5 @@
-* Integrate with WhatsApp so that it can send a message to whomewver I ask
-* Integrate with WhatSapp so that I can call by voice command.
-* Integrate with Teams
-* Integrate with Microsoft One Note
 * Integrate with Outlook - should be able to send me reminders for meetings etc. and check and reply emails for me
 * Integrate with Outlook - should be able to send me reminders for meetings etc. and check and reply emails for me
-* Integrate with dictionary
 
 
 --------------------------------
@@ -13,3 +8,4 @@ Done:
 
 * Should be able to identify the current time.
 * Should be able to tell the weather outside of my current location.
+* Integrate with dictionary
