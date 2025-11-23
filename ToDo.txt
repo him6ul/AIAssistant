@@ -4,7 +4,7 @@
 * Integrate with Microsoft One Note
 * Integrate with Outlook - should be able to send me reminders for meetings etc. and check and reply emails for me
 * Integrate with Outlook - should be able to send me reminders for meetings etc. and check and reply emails for me
-* 
+* Integrate with dictionary
 
 
 --------------------------------

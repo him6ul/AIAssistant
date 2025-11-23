@@ -91,6 +91,8 @@ class VoiceListener:
         
         self._listening = False
         self._recording = False
+        self._stop_check_interval = 0.5  # Check for stop commands every 0.5 seconds
+        self._stop_listener_task: Optional[asyncio.Task] = None  # Background task for listening to stop commands
     
     def _initialize_porcupine(self):
         """
@@ -157,6 +159,107 @@ class VoiceListener:
             logger.error(f"Failed to initialize audio: {e}")
             self.audio_stream = None
     
+    async def _handle_stop_command(self):
+        """
+        Handle stop command - interrupt TTS and shut down gracefully.
+        """
+        logger.info("Stop command detected - shutting down voice listener")
+        
+        # Stop any ongoing TTS immediately
+        try:
+            self.tts_engine.stop_speaking()
+            logger.info("Stopped ongoing TTS")
+        except Exception as e:
+            logger.warning(f"Error stopping TTS: {e}")
+        
+        # Set listening flag to False immediately to stop the loop
+        self._listening = False
+        logger.info("Set _listening flag to False")
+        
+        # Get user name from environment or use default
+        user_name = os.getenv("USER_NAME", "Himanshu")
+        goodbye_message = f"Goodbye {user_name}"
+        
+        # Run TTS in executor to avoid blocking async event loop
+        # Ensure wait=True so it completes before we stop
+        loop = asyncio.get_event_loop()
+        logger.info(f"Speaking goodbye message: {goodbye_message}")
+        result = await loop.run_in_executor(None, self.tts_engine.speak, goodbye_message, True)
+        
+        if result:
+            logger.info("Goodbye message spoken successfully")
+        else:
+            logger.warning("Goodbye message may not have been spoken")
+        
+        # Stop the listener and clean up resources
+        logger.info("Calling stop() method to clean up resources...")
+        self.stop()
+        logger.info("Voice listener stop() completed - exiting")
+    
+    async def _listen_for_stop_during_tts(self):
+        """
+        Background task that continuously listens for stop commands while TTS is speaking.
+        This allows stop commands to work even when the assistant is speaking.
+        Uses direct audio transcription without requiring wake word.
+        """
+        logger.debug("Started background stop listener")
+        
+        while self._listening:
+            try:
+                if not self.audio_stream:
+                    await asyncio.sleep(0.5)
+                    continue
+                
+                # Record a short audio sample (1 second) to check for stop commands
+                # This works without requiring a wake word
+                try:
+                    audio_frames = []
+                    # Record ~1 second of audio (16 frames at 0.06s each)
+                    for _ in range(16):
+                        try:
+                            frame = self.audio_stream.read(512, exception_on_overflow=False)
+                            audio_frames.append(frame)
+                        except Exception as read_err:
+                            logger.debug(f"Error reading frame: {read_err}")
+                            break
+                        await asyncio.sleep(0.06)
+                    
+                    if len(audio_frames) > 5:  # Only process if we got enough audio
+                        audio_data = b''.join(audio_frames)
+                        
+                        # Transcribe the audio
+                        text = await self.stt_engine.transcribe_bytes(
+                            audio_data,
+                            sample_rate=self.sample_rate,
+                            channels=self.channels,
+                            sample_width=self.sample_width
+                        )
+                        
+                        if text:
+                            text_lower = text.lower().strip()
+                            stop_keywords = get_stop_words()
+                            
+                            # Check if any stop keyword is in the transcribed text
+                            is_stop = any(keyword in text_lower for keyword in stop_keywords)
+                            
+                            if is_stop:
+                                matched_keywords = [kw for kw in stop_keywords if kw in text_lower]
+                                logger.info(f"Stop command detected during TTS: '{text}' (matched: {matched_keywords})")
+                                await self._handle_stop_command()
+                                break
+                
+                except Exception as read_error:
+                    logger.debug(f"Error in stop listener: {read_error}")
+                
+                # Check every 1 second (after recording 1 second of audio)
+                await asyncio.sleep(0.2)  # Small delay before next check
+                
+            except Exception as e:
+                logger.debug(f"Error in stop listener: {e}")
+                await asyncio.sleep(0.5)
+        
+        logger.debug("Background stop listener stopped")
+    
     async def _process_voice_command(self, audio_data: bytes):
         """
         Process voice command after wake word detection.
@@ -189,37 +292,26 @@ class VoiceListener:
             is_stop_command = any(keyword in text_lower for keyword in stop_keywords)
             
             if is_stop_command:
-                logger.info(f"Stop command detected in: '{text}' - shutting down voice listener")
-                logger.info(f"Matched stop keywords: {[kw for kw in stop_keywords if kw in text_lower]}")
-                
-                # Set listening flag to False immediately to stop the loop
-                self._listening = False
-                logger.info("Set _listening flag to False")
-                
-                # Get user name from environment or use default
-                user_name = os.getenv("USER_NAME", "Himanshu")
-                goodbye_message = f"Goodbye {user_name}"
-                
-                # Run TTS in executor to avoid blocking async event loop
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self.tts_engine.speak, goodbye_message)
-                
-                # Brief pause to finish speaking
-                await asyncio.sleep(0.5)
-                
-                # Stop the listener and clean up resources
-                logger.info("Calling stop() method to clean up resources...")
-                self.stop()
-                logger.info("Voice listener stop() completed - exiting")
+                await self._handle_stop_command()
                 return
             
             # First, repeat the command back to confirm understanding
             confirmation = f"I heard: {text}. Let me help you with that."
             logger.info(f"Confirming command: {confirmation}")
             # Run TTS in executor to avoid blocking async event loop
-            import asyncio
+            # But also continue listening for stop commands in parallel
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.tts_engine.speak, confirmation)
+            
+            # Start TTS in background (non-blocking)
+            tts_task = loop.run_in_executor(None, self.tts_engine.speak, confirmation)
+            
+            # Wait for TTS to complete (background listener will handle stop detection)
+            try:
+                await tts_task
+            except Exception as e:
+                logger.warning(f"TTS task interrupted: {e}")
+                if not self._listening:
+                    return
             
             # Brief pause after confirmation
             await asyncio.sleep(0.3)
@@ -243,8 +335,19 @@ class VoiceListener:
             
             # Don't include mode/engine info in spoken response - just speak the content
             # Run TTS in executor to avoid blocking async event loop
+            # Background listener will handle stop detection during TTS
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.tts_engine.speak, content)
+            
+            # Start TTS in background (non-blocking)
+            tts_task = loop.run_in_executor(None, self.tts_engine.speak, content)
+            
+            # Wait for TTS to complete (background listener will handle stop detection)
+            try:
+                await tts_task
+            except Exception as e:
+                logger.warning(f"TTS task interrupted: {e}")
+                if not self._listening:
+                    return
             
             # Call callback if provided
             if self.callback:
@@ -273,6 +376,9 @@ class VoiceListener:
         
         self._listening = True
         logger.info("Voice listener started")
+        
+        # Start background task to listen for stop commands during TTS
+        self._stop_listener_task = asyncio.create_task(self._listen_for_stop_during_tts())
         
         # Simple wake word detection loop
         # In production, you'd use Porcupine's detection
@@ -324,6 +430,11 @@ class VoiceListener:
         """
         logger.info("Stopping voice listener...")
         self._listening = False
+        
+        # Cancel background stop listener task
+        if self._stop_listener_task and not self._stop_listener_task.done():
+            self._stop_listener_task.cancel()
+            logger.debug("Cancelled background stop listener task")
         
         try:
             if self.audio_stream:

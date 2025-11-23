@@ -28,6 +28,7 @@ class TTSEngine:
     ):
         # Lock to ensure only one TTS call at a time
         self._speak_lock = threading.Lock()
+        self._current_speak_process: Optional[subprocess.Popen] = None  # Track current TTS process for interruption
         # Store rate for use with 'say' command
         self.rate = rate
         """
@@ -113,6 +114,35 @@ class TTSEngine:
             logger.error(f"Failed to initialize TTS engine: {e}")
             self.engine = None
     
+    def stop_speaking(self) -> None:
+        """
+        Stop any ongoing speech immediately.
+        """
+        with self._speak_lock:
+            # Stop macOS say command if running
+            if self._current_speak_process:
+                try:
+                    logger.info("Stopping TTS (interrupting 'say' command)")
+                    self._current_speak_process.terminate()
+                    # Give it a moment to terminate gracefully
+                    try:
+                        self._current_speak_process.wait(timeout=0.5)
+                    except subprocess.TimeoutExpired:
+                        # Force kill if it doesn't terminate
+                        self._current_speak_process.kill()
+                        self._current_speak_process.wait()
+                except Exception as e:
+                    logger.warning(f"Error stopping TTS process: {e}")
+                finally:
+                    self._current_speak_process = None
+            
+            # Stop pyttsx3 if running
+            if self.engine:
+                try:
+                    self.engine.stop()
+                except:
+                    pass
+    
     def speak(self, text: str, wait: bool = True) -> bool:
         """
         Speak the given text.
@@ -160,20 +190,41 @@ class TTSEngine:
                         cmd.append(text)
                         
                         # Run say command and wait for completion
-                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-                        if result.returncode == 0:
-                            logger.info(f"Finished speaking via 'say' command (length: {len(text)} chars)")
-                            return True
-                        else:
-                            logger.error(f"'say' command failed: {result.stderr}")
+                        # Use Popen instead of run so we can interrupt it
+                        self._current_speak_process = subprocess.Popen(
+                            cmd, 
+                            stdout=subprocess.PIPE, 
+                            stderr=subprocess.PIPE,
+                            text=True
+                        )
+                        
+                        try:
+                            # Wait for completion with timeout
+                            result = self._current_speak_process.wait(timeout=60)
+                            self._current_speak_process = None
+                            
+                            if result == 0:
+                                logger.info(f"Finished speaking via 'say' command (length: {len(text)} chars)")
+                                return True
+                            else:
+                                logger.error(f"'say' command failed with code {result}")
+                                # Fallback to pyttsx3
+                                return self._speak_pyttsx3(text, wait)
+                        except subprocess.TimeoutExpired:
+                            logger.error("'say' command timed out")
+                            if self._current_speak_process:
+                                self._current_speak_process.kill()
+                                self._current_speak_process = None
                             # Fallback to pyttsx3
                             return self._speak_pyttsx3(text, wait)
-                    except subprocess.TimeoutExpired:
-                        logger.error("'say' command timed out")
-                        # Fallback to pyttsx3
-                        return self._speak_pyttsx3(text, wait)
                     except Exception as say_error:
                         logger.warning(f"'say' command error: {say_error}, trying pyttsx3")
+                        if self._current_speak_process:
+                            try:
+                                self._current_speak_process.kill()
+                            except:
+                                pass
+                            self._current_speak_process = None
                         # Fallback to pyttsx3
                         return self._speak_pyttsx3(text, wait)
                 else:

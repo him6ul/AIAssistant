@@ -16,7 +16,14 @@ from app.tasks.storage import get_task_storage
 from app.scheduler.email_scheduler import EmailScheduler
 from app.scheduler.onenote_scheduler import OneNoteScheduler
 from app.scheduler.reminder_scheduler import ReminderScheduler
-from app.connectors.loader import load_connectors, initialize_connectors
+# Connector loader is optional - can be enabled when connectors are configured
+try:
+    from app.connectors.loader import load_connectors, initialize_connectors
+    CONNECTORS_AVAILABLE = True
+except ImportError:
+    CONNECTORS_AVAILABLE = False
+    load_connectors = None
+    initialize_connectors = None
 # Voice listener is optional (requires pyaudio)
 try:
     from app.voice_listener import get_voice_listener
@@ -46,8 +53,13 @@ async def initialize_services():
     logger.info("Initializing services...")
     
     # Load connectors
-    load_connectors()
-    await initialize_connectors()
+    # Initialize connectors if available
+    if CONNECTORS_AVAILABLE and load_connectors and initialize_connectors:
+        try:
+            load_connectors()
+            await initialize_connectors()
+        except Exception as e:
+            logger.warning(f"Failed to initialize connectors: {e}")
     logger.info("Connectors loaded")
     
     # Initialize database

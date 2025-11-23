@@ -1,133 +1,235 @@
 # Connector Architecture
 
-This directory contains the plugin-based connector architecture for integrating with various communication and productivity services.
+A modular, pluggable architecture for integrating with multiple communication and productivity platforms.
 
-## Architecture Overview
+## 🎯 Overview
 
-The connector system uses a plugin-based architecture that makes it easy to add new service integrations:
+This module provides a clean, extensible system for connecting to various platforms:
+- **Messaging**: WhatsApp, Microsoft Teams, Slack
+- **Email**: Gmail, Outlook, IMAP
+- **Notes**: OneNote
+- **Future**: Telegram, SMS, Apple Mail, CRMs, etc.
 
-1. **Base Connector** (`base.py`): Abstract base class that all connectors must implement
-2. **Connector Registry** (`registry.py`): Manages registration and initialization of connectors
-3. **Connector Loader** (`loader.py`): Loads and initializes connectors at startup
-4. **Individual Connectors**: Implementation for each service (Outlook, Gmail, etc.)
+All connectors follow a unified interface pattern, making it easy to add new platforms without modifying core logic.
 
-## Adding a New Connector
+## 📁 Architecture
 
-To add a new connector (e.g., Yahoo Mail, Teams, Slack):
-
-### Step 1: Create the Connector Class
-
-Create a new file `app/connectors/your_service_connector.py`:
-
-```python
-from app.connectors.base import BaseConnector, ConnectorType, Message
-from typing import List, Optional
-from datetime import datetime
-
-class YourServiceConnector(BaseConnector):
-    """Your service connector."""
-    
-    def __init__(self, name: str = "your_service", **kwargs):
-        super().__init__(name, ConnectorType.EMAIL)  # or appropriate type
-        # Initialize your service-specific attributes
-    
-    async def initialize(self) -> bool:
-        """Initialize and authenticate with your service."""
-        try:
-            # Your initialization logic
-            self.initialized = True
-            return True
-        except Exception as e:
-            return False
-    
-    async def is_available(self) -> bool:
-        """Check if connector is available."""
-        return self.initialized
-    
-    async def get_messages(
-        self,
-        limit: int = 50,
-        unread_only: bool = False,
-        since: Optional[datetime] = None
-    ) -> List[Message]:
-        """Get messages from your service."""
-        # Your implementation
-        return []
-    
-    async def send_message(
-        self,
-        to: str,
-        subject: Optional[str],
-        body: str,
-        **kwargs
-    ) -> bool:
-        """Send message via your service."""
-        # Your implementation
-        return True
+```
+app/connectors/
+├── __init__.py              # Module exports
+├── base.py                   # Core interfaces (ABCs)
+├── models.py                 # Unified data models
+├── registry.py               # Connector registry (plugin system)
+├── middleware.py             # Retry, rate limiting, error handling
+├── services.py               # Unified services (aggregation layer)
+├── orchestrator.py           # Central coordinator
+├── example_usage.py          # Usage examples
+├── implementations/          # Concrete connector implementations
+│   ├── whatsapp_connector.py
+│   ├── teams_connector.py
+│   ├── outlook_connector.py
+│   ├── gmail_connector.py
+│   └── onenote_connector.py
+├── tests/                    # Unit tests
+│   └── test_whatsapp_connector.py
+└── README.md                 # This file
 ```
 
-### Step 2: Register the Connector
+## 🏗️ Core Components
 
-Add to `app/connectors/loader.py`:
+### 1. Base Interfaces (`base.py`)
 
-```python
-from app.connectors.your_service_connector import YourServiceConnector
+Abstract base classes that define the contract for all connectors:
 
-def load_connectors():
-    registry = get_connector_registry()
-    registry.register("your_service", YourServiceConnector)
-    # ... existing registrations
-```
+- **`MessageSourceConnector`**: For messaging platforms (WhatsApp, Teams, etc.)
+- **`MailSourceConnector`**: For email platforms (Gmail, Outlook, etc.)
+- **`NoteSourceConnector`**: For notes platforms (OneNote, etc.)
 
-### Step 3: Configure Initialization
+### 2. Unified Data Models (`models.py`)
 
-Update `initialize_connectors()` in `loader.py` to initialize your connector based on configuration:
+Common data structures that all connectors must map to:
 
-```python
-async def initialize_connectors():
-    # ... existing code
-    if os.getenv("YOUR_SERVICE_API_KEY"):
-        connectors_to_init.append("your_service")
-```
+- **`UnifiedMessage`**: Messages from any messaging platform
+- **`UnifiedEmail`**: Emails from any email platform
+- **`UnifiedNote`**: Notes from any notes platform
+- **`UnifiedMeeting`**: Calendar events (for future use)
+- **`SourceType`**: Enumeration of all supported platforms
 
-## Available Connectors
+### 3. Connector Registry (`registry.py`)
 
-- **Outlook** (`outlook_connector.py`): Microsoft Outlook via Graph API
-- **Gmail** (`gmail_connector.py`): Gmail via IMAP
-
-## Using Connectors
+Plugin mechanism for dynamic registration and retrieval:
 
 ```python
-from app.connectors.registry import get_connector_registry
+from app.connectors.registry import get_registry
+from app.connectors.models import SourceType
 
-registry = get_connector_registry()
-
-# Get a specific connector
-outlook = registry.get("outlook")
-if outlook:
-    messages = await outlook.get_messages(limit=10, unread_only=True)
-
-# Get all email connectors
-email_connectors = registry.get_all(ConnectorType.EMAIL)
-for connector in email_connectors:
-    if await connector.is_available():
-        messages = await connector.get_messages()
+registry = get_registry()
+registry.register_message_connector(SourceType.WHATSAPP, whatsapp_connector)
+connector = registry.get_message_connector(SourceType.WHATSAPP)
 ```
 
-## Connector Types
+### 4. Unified Services (`services.py`)
 
-- `EMAIL`: Email services (Outlook, Gmail, Yahoo, etc.)
-- `CALENDAR`: Calendar services
-- `NOTES`: Note-taking services (OneNote, Evernote, etc.)
-- `MESSAGING`: Messaging services (Teams, Slack, etc.)
-- `TASKS`: Task management services
+Aggregation layer that provides single interface to all connectors:
 
-## Best Practices
+- **`UnifiedMessageService`**: Access messages from all messaging connectors
+- **`UnifiedInboxService`**: Access emails from all mail connectors
+- **`UnifiedNotesService`**: Access notes from all notes connectors
 
-1. **Error Handling**: Always handle errors gracefully and log them
-2. **Authentication**: Store credentials securely (use environment variables)
-3. **Rate Limiting**: Respect API rate limits
-4. **Async Operations**: All connector methods should be async
-5. **Initialization**: Check availability before using connectors
-6. **Message Format**: Use the standard `Message` model for consistency
+### 5. Assistant Orchestrator (`orchestrator.py`)
 
+Central coordinator that:
+- Initializes all connectors
+- Aggregates data from all sources
+- Provides search across all platforms
+- Recommends next actions
+- Manages local caching
+
+## 🚀 Quick Start
+
+### 1. Initialize Connectors
+
+```python
+from app.connectors.registry import get_registry
+from app.connectors.models import SourceType
+from app.connectors.implementations import (
+    WhatsAppConnector,
+    GmailConnector,
+    OutlookConnector,
+)
+
+registry = get_registry()
+
+# Register connectors
+whatsapp = WhatsAppConnector()
+registry.register_message_connector(SourceType.WHATSAPP, whatsapp)
+
+gmail = GmailConnector()
+registry.register_mail_connector(SourceType.GMAIL, gmail)
+
+outlook = OutlookConnector()
+registry.register_mail_connector(SourceType.OUTLOOK, outlook)
+```
+
+### 2. Use the Orchestrator
+
+```python
+from app.connectors.orchestrator import AssistantOrchestrator
+
+orchestrator = AssistantOrchestrator()
+
+# Initialize all connectors
+await orchestrator.initialize()
+
+# Get all messages
+messages = await orchestrator.get_all_messages(limit=50)
+
+# Get all emails
+emails = await orchestrator.get_all_emails(unread_only=True)
+
+# Search across all sources
+results = await orchestrator.search_across_sources("meeting")
+
+# Get recommended actions
+actions = await orchestrator.get_next_actions()
+```
+
+### 3. Use Unified Services Directly
+
+```python
+from app.connectors.services import UnifiedMessageService, UnifiedInboxService
+
+message_service = UnifiedMessageService()
+inbox_service = UnifiedInboxService()
+
+# Get messages from all connectors
+messages = await message_service.get_all_messages(limit=50)
+
+# Send a message
+sent_msg = await message_service.send_message(
+    content="Hello!",
+    to_user_id="+1234567890",
+    source_type=SourceType.WHATSAPP,
+)
+
+# Get emails
+emails = await inbox_service.get_all_emails(unread_only=True)
+
+# Search emails
+results = await inbox_service.search_emails("important")
+```
+
+## 🔧 Configuration
+
+Connectors are configured via environment variables:
+
+```bash
+# WhatsApp
+WHATSAPP_API_TOKEN=your_token
+WHATSAPP_PHONE_NUMBER_ID=your_phone_id
+WHATSAPP_BUSINESS_ACCOUNT_ID=your_business_id
+
+# Microsoft (Teams, Outlook, OneNote)
+MS_CLIENT_ID=your_client_id
+MS_CLIENT_SECRET=your_client_secret
+MS_TENANT_ID=your_tenant_id
+
+# Gmail (IMAP)
+EMAIL_IMAP_SERVER=imap.gmail.com
+EMAIL_IMAP_PORT=993
+EMAIL_IMAP_USERNAME=your_email@gmail.com
+EMAIL_IMAP_PASSWORD=your_app_password
+
+# Enable/Disable connectors
+ENABLE_WHATSAPP=true
+ENABLE_TEAMS=true
+ENABLE_OUTLOOK=true
+ENABLE_GMAIL=true
+ENABLE_ONENOTE=true
+```
+
+## 🧪 Testing
+
+Run unit tests:
+
+```bash
+pytest app/connectors/tests/
+```
+
+Tests use mocks to avoid requiring actual API credentials.
+
+## 📚 Key Design Principles
+
+1. **Interface-Driven**: All connectors implement base interfaces
+2. **Dependency Injection**: Services accept connectors via registry
+3. **Graceful Degradation**: System continues if one connector fails
+4. **Unified Data Models**: All platforms map to common schemas
+5. **Plugin Architecture**: Easy to add new connectors
+6. **Error Handling**: Retry logic, rate limiting, error boundaries
+7. **Async/Await**: Non-blocking operations throughout
+
+## 🔌 Middleware
+
+The `middleware.py` module provides:
+
+- **`@with_retry`**: Automatic retry with exponential backoff
+- **`@with_rate_limit`**: Rate limiting for API calls
+- **`@with_error_boundary`**: Graceful error handling
+- **`@with_logging`**: Automatic logging
+
+Example:
+
+```python
+from app.connectors.middleware import with_retry, RetryConfig
+
+@with_retry(RetryConfig(max_retries=3, initial_delay=1.0))
+async def fetch_data():
+    # Your code here
+    pass
+```
+
+## 📖 See Also
+
+- [HOW_TO_ADD_NEW_CONNECTOR.md](HOW_TO_ADD_NEW_CONNECTOR.md) - Guide for adding new connectors
+- [ARCHITECTURE.md](ARCHITECTURE.md) - Detailed architecture documentation
+- [example_usage.py](example_usage.py) - Complete usage examples

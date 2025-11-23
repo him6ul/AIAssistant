@@ -1,9 +1,17 @@
 """
-Connector registry - manages all available connectors.
+Connector Registry - Plugin mechanism for managing connectors.
+
+This registry allows dynamic registration and retrieval of connectors
+without modifying core assistant logic.
 """
 
-from typing import Dict, List, Optional, Type
-from app.connectors.base import BaseConnector, ConnectorType
+from typing import Dict, Optional, Type, Any
+from app.connectors.base import (
+    MessageSourceConnector,
+    MailSourceConnector,
+    NoteSourceConnector,
+)
+from app.connectors.models import SourceType
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -11,128 +19,193 @@ logger = get_logger(__name__)
 
 class ConnectorRegistry:
     """
-    Registry for managing connectors.
-    Allows easy registration and retrieval of connectors.
+    Central registry for all connectors.
+    
+    Supports dynamic registration and retrieval of connectors by source type.
+    All connectors are registered here and accessed through this registry.
     """
     
-    def __init__(self):
-        """Initialize registry."""
-        self._connectors: Dict[str, BaseConnector] = {}
-        self._connector_classes: Dict[str, Type[BaseConnector]] = {}
+    _instance: Optional['ConnectorRegistry'] = None
+    _message_connectors: Dict[SourceType, MessageSourceConnector] = {}
+    _mail_connectors: Dict[SourceType, MailSourceConnector] = {}
+    _note_connectors: Dict[SourceType, NoteSourceConnector] = {}
     
-    def register(
+    def __new__(cls):
+        """Singleton pattern - ensure only one registry instance."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def register_message_connector(
         self,
-        name: str,
-        connector_class: Type[BaseConnector],
-        auto_init: bool = False
-    ):
+        source_type: SourceType,
+        connector: MessageSourceConnector,
+    ) -> None:
         """
-        Register a connector class.
+        Register a message connector.
         
         Args:
-            name: Connector name (e.g., "outlook", "gmail")
-            connector_class: Connector class
-            auto_init: Whether to auto-initialize when registered
+            source_type: The source type this connector handles
+            connector: The connector instance
         """
-        self._connector_classes[name] = connector_class
-        logger.info(f"Registered connector: {name}")
-        
-        if auto_init:
-            self.initialize_connector(name)
+        if source_type in self._message_connectors:
+            logger.warning(f"Overwriting existing message connector for {source_type}")
+        self._message_connectors[source_type] = connector
+        logger.info(f"Registered message connector: {source_type}")
     
-    async def initialize_connector(self, name: str, **kwargs) -> Optional[BaseConnector]:
+    def register_mail_connector(
+        self,
+        source_type: SourceType,
+        connector: MailSourceConnector,
+    ) -> None:
         """
-        Initialize a connector instance.
+        Register a mail connector.
         
         Args:
-            name: Connector name
-            **kwargs: Arguments to pass to connector constructor
-            
-        Returns:
-            Initialized connector instance or None if failed
+            source_type: The source type this connector handles
+            connector: The connector instance
         """
-        if name not in self._connector_classes:
-            logger.warning(f"Connector {name} not registered")
-            return None
-        
-        try:
-            connector_class = self._connector_classes[name]
-            connector = connector_class(name=name, **kwargs)
-            
-            # Initialize the connector (async)
-            success = await connector.initialize()
-            if not success:
-                logger.warning(f"Connector {name} initialization returned False")
-                return None
-            
-            self._connectors[name] = connector
-            logger.info(f"Initialized connector: {name}")
-            return connector
-        except Exception as e:
-            logger.error(f"Failed to initialize connector {name}: {e}")
-            return None
+        if source_type in self._mail_connectors:
+            logger.warning(f"Overwriting existing mail connector for {source_type}")
+        self._mail_connectors[source_type] = connector
+        logger.info(f"Registered mail connector: {source_type}")
     
-    def get(self, name: str) -> Optional[BaseConnector]:
+    def register_note_connector(
+        self,
+        source_type: SourceType,
+        connector: NoteSourceConnector,
+    ) -> None:
         """
-        Get a connector instance.
+        Register a note connector.
         
         Args:
-            name: Connector name
-            
+            source_type: The source type this connector handles
+            connector: The connector instance
+        """
+        if source_type in self._note_connectors:
+            logger.warning(f"Overwriting existing note connector for {source_type}")
+        self._note_connectors[source_type] = connector
+        logger.info(f"Registered note connector: {source_type}")
+    
+    def get_message_connector(
+        self,
+        source_type: SourceType,
+    ) -> Optional[MessageSourceConnector]:
+        """
+        Get a message connector by source type.
+        
+        Args:
+            source_type: The source type to get connector for
+        
         Returns:
             Connector instance or None if not found
         """
-        return self._connectors.get(name)
+        return self._message_connectors.get(source_type)
     
-    def get_all(self, connector_type: Optional[ConnectorType] = None) -> List[BaseConnector]:
+    def get_mail_connector(
+        self,
+        source_type: SourceType,
+    ) -> Optional[MailSourceConnector]:
         """
-        Get all connectors, optionally filtered by type.
+        Get a mail connector by source type.
         
         Args:
-            connector_type: Optional filter by connector type
-            
-        Returns:
-            List of connectors
-        """
-        if connector_type:
-            return [
-                connector for connector in self._connectors.values()
-                if connector.connector_type == connector_type
-            ]
-        return list(self._connectors.values())
-    
-    def list_available(self) -> List[str]:
-        """
-        List all available connector names.
+            source_type: The source type to get connector for
         
         Returns:
-            List of connector names
+            Connector instance or None if not found
         """
-        return list(self._connector_classes.keys())
+        return self._mail_connectors.get(source_type)
     
-    def list_initialized(self) -> List[str]:
+    def get_note_connector(
+        self,
+        source_type: SourceType,
+    ) -> Optional[NoteSourceConnector]:
         """
-        List all initialized connector names.
+        Get a note connector by source type.
+        
+        Args:
+            source_type: The source type to get connector for
         
         Returns:
-            List of initialized connector names
+            Connector instance or None if not found
         """
-        return list(self._connectors.keys())
+        return self._note_connectors.get(source_type)
+    
+    def get_all_message_connectors(self) -> Dict[SourceType, MessageSourceConnector]:
+        """Get all registered message connectors."""
+        return self._message_connectors.copy()
+    
+    def get_all_mail_connectors(self) -> Dict[SourceType, MailSourceConnector]:
+        """Get all registered mail connectors."""
+        return self._mail_connectors.copy()
+    
+    def get_all_note_connectors(self) -> Dict[SourceType, NoteSourceConnector]:
+        """Get all registered note connectors."""
+        return self._note_connectors.copy()
+    
+    def unregister_connector(self, source_type: SourceType) -> None:
+        """
+        Unregister a connector (any type).
+        
+        Args:
+            source_type: The source type to unregister
+        """
+        removed = False
+        if source_type in self._message_connectors:
+            del self._message_connectors[source_type]
+            removed = True
+        if source_type in self._mail_connectors:
+            del self._mail_connectors[source_type]
+            removed = True
+        if source_type in self._note_connectors:
+            del self._note_connectors[source_type]
+            removed = True
+        
+        if removed:
+            logger.info(f"Unregistered connector: {source_type}")
+        else:
+            logger.warning(f"No connector found to unregister: {source_type}")
+    
+    def is_registered(self, source_type: SourceType) -> bool:
+        """
+        Check if a connector is registered for the given source type.
+        
+        Args:
+            source_type: The source type to check
+        
+        Returns:
+            True if registered, False otherwise
+        """
+        return (
+            source_type in self._message_connectors or
+            source_type in self._mail_connectors or
+            source_type in self._note_connectors
+        )
+    
+    def get_registered_types(self) -> list[SourceType]:
+        """Get list of all registered source types."""
+        all_types = set()
+        all_types.update(self._message_connectors.keys())
+        all_types.update(self._mail_connectors.keys())
+        all_types.update(self._note_connectors.keys())
+        return list(all_types)
+    
+    def clear(self) -> None:
+        """Clear all registered connectors (useful for testing)."""
+        self._message_connectors.clear()
+        self._mail_connectors.clear()
+        self._note_connectors.clear()
+        logger.info("Cleared all connectors from registry")
 
 
 # Global registry instance
 _registry: Optional[ConnectorRegistry] = None
 
 
-def get_connector_registry() -> ConnectorRegistry:
-    """
-    Get or create the global connector registry.
-    
-    Returns:
-        ConnectorRegistry instance
-    """
+def get_registry() -> ConnectorRegistry:
+    """Get the global connector registry instance."""
     global _registry
     if _registry is None:
         _registry = ConnectorRegistry()
     return _registry
-
