@@ -5,9 +5,12 @@ Gmail connector implementation using Google Gmail API.
 import os
 import email
 import imaplib
+import tempfile
+import pickle
 from email.header import decode_header
 from typing import List, Optional, Callable, Dict, Any
 from datetime import datetime
+from multiprocessing import Process, Queue
 from app.connectors.base import MailSourceConnector, ConnectorCapabilities
 from app.connectors.models import UnifiedEmail, SourceType, EmailPriority
 from app.connectors.middleware import with_retry, RetryConfig, with_error_boundary, with_logging
@@ -15,6 +18,130 @@ from app.utils.logger import get_logger
 import asyncio
 
 logger = get_logger(__name__)
+
+
+# Standalone function for multiprocessing (must be at module level to be picklable)
+def _fetch_emails_in_process(
+    imap_server: str,
+    imap_port: int,
+    username: str,
+    password: str,
+    folder: str,
+    search_query: str,
+    email_ids: List[str],
+    limit: int,
+    result_queue: Queue
+) -> None:
+    """
+    Fetch emails in a separate process to avoid event loop blocking.
+    
+    Args:
+        result_queue: Queue to put the result in (success, temp_file_path, error)
+    """
+    import imaplib
+    import email
+    import sys
+    from email.header import decode_header
+    
+    # Log to stderr so it appears in main process logs
+    print(f"[PROCESS] Starting fetch: server={imap_server}, folder={folder}, query={search_query}", file=sys.stderr, flush=True)
+    
+    try:
+        print("[PROCESS] Creating IMAP connection...", file=sys.stderr, flush=True)
+        # Create fresh connection in this process
+        imap = imaplib.IMAP4_SSL(imap_server, imap_port)
+        print("[PROCESS] Connection created, logging in...", file=sys.stderr, flush=True)
+        imap.login(username, password)
+        print("[PROCESS] Login successful, selecting folder...", file=sys.stderr, flush=True)
+        
+        # Select folder
+        status, _ = imap.select(folder)
+        print(f"[PROCESS] Folder select result: {status}", file=sys.stderr, flush=True)
+        if status != "OK":
+            imap.logout()
+            result_queue.put((False, None, f"Failed to select folder: {status}"))
+            return
+        
+        # Search for emails (if not already provided)
+        if not email_ids:
+            print(f"[PROCESS] Searching with query: {search_query}", file=sys.stderr, flush=True)
+            status, messages = imap.search(None, search_query)
+            print(f"[PROCESS] Search result: {status}", file=sys.stderr, flush=True)
+            if status != "OK":
+                imap.logout()
+                result_queue.put((False, None, f"Search failed: {status}"))
+                return
+            
+            if not messages or len(messages) == 0:
+                print("[PROCESS] No messages found", file=sys.stderr, flush=True)
+                imap.logout()
+                result_queue.put((True, None, None))
+                return
+            
+            email_ids_str = messages[0].decode('utf-8', errors='ignore') if isinstance(messages[0], bytes) else str(messages[0])
+            email_ids = email_ids_str.split()[:limit]
+            print(f"[PROCESS] Found {len(email_ids)} email IDs", file=sys.stderr, flush=True)
+        
+        # Fetch emails - extract raw bytes to make them picklable
+        emails_data = []
+        print(f"[PROCESS] Fetching {len(email_ids)} emails...", file=sys.stderr, flush=True)
+        for idx, email_id in enumerate(email_ids[:limit], 1):
+            try:
+                print(f"[PROCESS] Fetching email {idx}/{len(email_ids)}: {email_id}", file=sys.stderr, flush=True)
+                status, msg_data = imap.fetch(email_id, "(RFC822 FLAGS)")
+                if status == "OK" and msg_data:
+                    # Extract raw email bytes and flags - make them picklable
+                    raw_email_bytes = None
+                    flags_str = ""
+                    
+                    for part in msg_data:
+                        if isinstance(part, tuple) and len(part) >= 2:
+                            # Check if this part contains the email body
+                            if isinstance(part[1], bytes) and b"From:" in part[1]:
+                                raw_email_bytes = part[1]
+                            # Check for flags
+                            elif isinstance(part[1], bytes) and b"FLAGS" in part[1]:
+                                flags_str = part[1].decode('utf-8', errors='ignore')
+                    
+                    # Alternative: try to get email from first part
+                    if raw_email_bytes is None and len(msg_data) > 0:
+                        for item in msg_data:
+                            if isinstance(item, tuple) and len(item) >= 2:
+                                if isinstance(item[1], bytes) and len(item[1]) > 100:  # Likely the email body
+                                    raw_email_bytes = item[1]
+                                    break
+                    
+                    if raw_email_bytes:
+                        # Return picklable data: (email_id, raw_email_bytes, flags_str)
+                        emails_data.append((str(email_id), raw_email_bytes, flags_str))
+            except Exception as e:
+                print(f"[PROCESS] Error fetching {email_id}: {e}", file=sys.stderr, flush=True)
+                continue  # Skip failed emails
+        
+        print(f"[PROCESS] Fetched {len(emails_data)} emails, logging out...", file=sys.stderr, flush=True)
+        imap.logout()
+        
+        # Write to temp file instead of returning directly (avoids pickling large data)
+        import tempfile
+        import pickle
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pkl')
+        temp_file_path = temp_file.name
+        temp_file.close()
+        
+        print(f"[PROCESS] Writing {len(emails_data)} emails to temp file: {temp_file_path}", file=sys.stderr, flush=True)
+        with open(temp_file_path, 'wb') as f:
+            pickle.dump(emails_data, f)
+        file_size = os.path.getsize(temp_file_path)
+        print(f"[PROCESS] Wrote {file_size} bytes to temp file", file=sys.stderr, flush=True)
+        print(f"[PROCESS] Putting result in queue: success=True, file_path={temp_file_path}", file=sys.stderr, flush=True)
+        result_queue.put((True, temp_file_path, None))
+        print(f"[PROCESS] Result put in queue, process exiting...", file=sys.stderr, flush=True)
+        
+    except Exception as e:
+        import traceback
+        print(f"[PROCESS] Exception: {e}", file=sys.stderr, flush=True)
+        print(f"[PROCESS] Traceback: {traceback.format_exc()}", file=sys.stderr, flush=True)
+        result_queue.put((False, None, str(e)))
 
 
 class GmailConnector(MailSourceConnector):
@@ -146,144 +273,143 @@ class GmailConnector(MailSourceConnector):
         since_display = since.strftime('%Y-%m-%d %H:%M:%S UTC') if since else 'None (all emails)'
         logger.info(f"     - Since: {since_display}")
         
-        # Always create a fresh connection for each fetch to avoid stale connection issues
-        # The connection reuse was causing hangs with stale connections
-        logger.info("   🔌 Creating fresh connection for this fetch...")
-        if self._imap:
-            # Try to close existing connection gracefully, but don't wait if it hangs
-            try:
-                loop = asyncio.get_event_loop()
-                await asyncio.wait_for(
-                    loop.run_in_executor(None, lambda: self._imap.logout() if self._imap else None),
-                    timeout=2.0
-                )
-            except:
-                pass  # Ignore errors when closing stale connection
-            self._imap = None
-            self._connected = False
+        # Run entire fetch operation in a separate process to avoid event loop blocking
+        folder_name = folder or "INBOX"
         
-        connect_success = await self.connect()
-        if not connect_success:
-            logger.error("   ❌ Failed to connect")
-            return []
+        # Build search criteria
+        search_criteria = []
+        if unread_only:
+            search_criteria.append("UNSEEN")
+            logger.info("   🔍 Search filter: UNSEEN (unread emails only)")
+        if since:
+            since_str = since.strftime("%d-%b-%Y")
+            search_criteria.append(f'SINCE {since_str}')
+            logger.info(f"   🔍 Search filter: SINCE {since_str}")
+        
+        search_query = " ".join(search_criteria) if search_criteria else "ALL"
+        logger.info(f"   🔍 IMAP search query: '{search_query}'")
+        
+        logger.info("   🚀 Running fetch in separate process to avoid blocking...")
+        fetch_start = datetime.utcnow()
         
         try:
-            folder_name = folder or "INBOX"
+            # Use multiprocessing.Process with Queue for result transfer
+            result_queue = Queue()
             
-            # Select folder with timeout (run in executor to avoid hanging)
-            logger.info(f"   Selecting folder: {folder_name}")
-            select_start = datetime.utcnow()
-            try:
-                # Run select in executor using synchronous imaplib
-                def _select_folder():
-                    """Select folder synchronously in executor thread."""
-                    status, data = self._imap.select(folder_name)
-                    return status
-                
-                loop = asyncio.get_event_loop()
-                status = await asyncio.wait_for(
-                    loop.run_in_executor(None, _select_folder),
-                    timeout=10.0
+            # Create and start process
+            process = Process(
+                target=_fetch_emails_in_process,
+                args=(
+                    self.imap_server,
+                    self.imap_port,
+                    self.username,
+                    self.password,
+                    folder_name,
+                    search_query,
+                    [],  # email_ids - empty to trigger search
+                    limit,
+                    result_queue
                 )
-                select_duration = (datetime.utcnow() - select_start).total_seconds()
-                logger.info(f"   ✅ Folder selected: {status} (took {select_duration:.2f}s)")
-            except asyncio.TimeoutError:
-                select_duration = (datetime.utcnow() - select_start).total_seconds()
-                logger.error(f"   ❌ TIMEOUT: Selecting folder {folder_name} timed out after {select_duration:.2f}s (10s limit)")
-                return []
-            except Exception as select_error:
-                select_duration = (datetime.utcnow() - select_start).total_seconds()
-                logger.error(f"   ❌ Error selecting folder {folder_name} after {select_duration:.2f}s: {select_error}", exc_info=True)
-                return []
+            )
             
-            # Build search criteria
-            # For Gmail, we can search by date more precisely
-            search_criteria = []
-            if unread_only:
-                search_criteria.append("UNSEEN")
-                logger.info("   🔍 Search filter: UNSEEN (unread emails only)")
-            if since:
-                # IMAP SINCE uses date only, but we can filter by time after fetching
-                # Use SINCE for date filtering
-                since_str = since.strftime("%d-%b-%Y")
-                search_criteria.append(f'SINCE {since_str}')
-                logger.info(f"   🔍 Search filter: SINCE {since_str}")
+            logger.info("   ⏳ Starting process and waiting for result...")
+            process.start()
             
-            # Gmail supports searching for important emails using the \Important flag
-            # But we'll fetch all and filter by importance after parsing headers
-            search_query = " ".join(search_criteria) if search_criteria else "ALL"
-            logger.info(f"   🔍 IMAP search query: '{search_query}'")
-            
-            # Search for emails (run in executor to avoid hanging)
-            logger.info("   Searching for emails...")
-            search_start = datetime.utcnow()
+            # Wait for result with timeout
             try:
-                # Run search in executor using synchronous imaplib
-                def _search_emails():
-                    """Search emails synchronously in executor thread."""
-                    status, messages = self._imap.search(None, search_query)
-                    return status, messages
+                # Wait for process to complete with timeout
+                process.join(timeout=60.0)
                 
-                loop = asyncio.get_event_loop()
-                status, messages = await asyncio.wait_for(
-                    loop.run_in_executor(None, _search_emails),
-                    timeout=10.0
-                )
-                search_duration = (datetime.utcnow() - search_start).total_seconds()
-            except asyncio.TimeoutError:
-                search_duration = (datetime.utcnow() - search_start).total_seconds()
-                logger.error(f"   ❌ TIMEOUT: Search timed out after {search_duration:.2f}s (10s limit)")
-                return []
-            except Exception as search_error:
-                logger.error(f"   ❌ Error during search: {search_error}", exc_info=True)
+                if process.is_alive():
+                    logger.error("   ❌ Process timed out after 60s, terminating...")
+                    process.terminate()
+                    process.join(timeout=5.0)
+                    if process.is_alive():
+                        process.kill()
+                    return []
+                
+                # Get result from queue
+                if result_queue.empty():
+                    logger.error("   ❌ Queue is empty, process may have failed")
+                    return []
+                
+                success, temp_file_path, error = result_queue.get(timeout=5.0)
+                fetch_duration = (datetime.utcnow() - fetch_start).total_seconds()
+                logger.info(f"   ✅ Process completed after {fetch_duration:.2f}s")
+                logger.info(f"   📊 Process result: success={success}, temp_file={temp_file_path}, error={error}")
+            except Exception as queue_error:
+                logger.error(f"   ❌ Error getting result from queue: {queue_error}", exc_info=True)
+                if process.is_alive():
+                    process.terminate()
                 return []
             
-            if status != "OK":
-                logger.error(f"   ❌ Failed to search Gmail (status: {status})")
+            if not success:
+                logger.error(f"   ❌ Fetch failed in process: {error}")
                 return []
             
-            # Get email IDs from imaplib response
-            if not messages or len(messages) == 0:
+            if not temp_file_path or not os.path.exists(temp_file_path):
+                logger.error(f"   ❌ Temp file not found: {temp_file_path}")
+                return []
+            
+            # Read emails from temp file
+            logger.info(f"   📂 Reading emails from temp file: {temp_file_path}")
+            try:
+                with open(temp_file_path, 'rb') as f:
+                    emails_data = pickle.load(f)
+                logger.info(f"   ✅ Loaded {len(emails_data)} email(s) from temp file")
+                # Clean up temp file
+                os.unlink(temp_file_path)
+                logger.info(f"   🗑️  Deleted temp file")
+            except Exception as e:
+                logger.error(f"   ❌ Error reading temp file: {e}", exc_info=True)
+                if os.path.exists(temp_file_path):
+                    os.unlink(temp_file_path)
+                return []
+            
+            if not emails_data:
                 logger.info("   ℹ️  No emails found matching search criteria")
                 return []
             
-            # imaplib returns messages as list of bytes
-            email_ids_str = messages[0].decode('utf-8', errors='ignore') if isinstance(messages[0], bytes) else str(messages[0])
+            logger.info(f"   ✅ Fetch completed in {fetch_duration:.2f}s")
+            logger.info(f"   📊 Fetched {len(emails_data)} email(s) from process")
             
-            if not email_ids_str or not email_ids_str.strip():
-                logger.info("   ℹ️  No emails found matching search criteria")
-                return []
-            
-            all_email_ids = email_ids_str.split()
-            total_found = len(all_email_ids)
-            email_ids = all_email_ids[:limit]
-            
-            logger.info(f"   ✅ Search completed in {search_duration:.2f}s")
-            logger.info(f"   📊 Found {total_found} total email(s) matching criteria")
-            logger.info(f"   📊 Will fetch {len(email_ids)} email(s) (limited to {limit})")
-            
-            # Fetch emails with flags to check for IMPORTANT flag
+            # Parse emails in main process
             unified_emails = []
             fetch_count = 0
             error_count = 0
             
-            logger.info("   📥 Fetching individual emails...")
-            for idx, email_id in enumerate(email_ids, 1):
+            logger.info("   📥 Parsing fetched emails...")
+            for email_id_str, raw_email_bytes, flags_str in emails_data:
                 try:
-                    email_id_str = email_id.decode() if isinstance(email_id, bytes) else str(email_id)
-                    logger.debug(f"   [{idx}/{len(email_ids)}] Fetching email ID: {email_id_str}")
+                    logger.debug(f"   [{fetch_count + 1}/{len(emails_data)}] Parsing email ID: {email_id_str}")
                     
-                    # Fetch both the email and its flags (run in executor to avoid hanging)
-                    def _fetch_email():
-                        """Fetch email synchronously in executor thread."""
-                        status, msg_data = self._imap.fetch(email_id_str, "(RFC822 FLAGS)")
-                        return status, msg_data
+                    # Check for important flag
+                    is_important_flag = False
+                    if flags_str and ("\\Important" in flags_str or "IMPORTANT" in flags_str.upper()):
+                        is_important_flag = True
                     
-                    loop = asyncio.get_event_loop()
-                    status, msg_data = await asyncio.wait_for(
-                        loop.run_in_executor(None, _fetch_email),
-                        timeout=10.0
-                    )
+                    if not raw_email_bytes:
+                        logger.warning(f"   ⚠️  No email body for {email_id_str}")
+                        error_count += 1
+                        continue
+                    
+                    email_message = email.message_from_bytes(raw_email_bytes)
+                    
+                    # Add important flag to headers if found
+                    if is_important_flag:
+                        email_message["X-IMAP-Important"] = "true"
+                    
+                    unified_email = self._convert_imap_email(email_message, email_id_str)
+                    unified_emails.append(unified_email)
+                    fetch_count += 1
+                    
+                    logger.debug(f"      ✅ Converted: '{unified_email.subject[:50]}...' from {unified_email.from_address.get('email', 'Unknown')}")
+                    logger.debug(f"         - Important: {unified_email.is_important}, Priority: {unified_email.priority}")
+                    
+                except Exception as e:
+                    logger.warning(f"   ⚠️  Failed to parse email {email_id_str}: {e}", exc_info=True)
+                    error_count += 1
+                    continue
                     
                     if status != "OK" or not msg_data or not msg_data[0]:
                         logger.warning(f"   ⚠️  Failed to fetch email {email_id_str}: status={status}")
@@ -336,31 +462,26 @@ class GmailConnector(MailSourceConnector):
                     logger.debug(f"         - Important: {unified_email.is_important}, Priority: {unified_email.priority}")
                     
                 except Exception as e:
-                    logger.warning(f"   ⚠️  Failed to fetch email {email_id}: {e}", exc_info=True)
+                    logger.warning(f"   ⚠️  Failed to parse email {email_id_str}: {e}", exc_info=True)
                     error_count += 1
                     continue
             
             fetch_duration = (datetime.utcnow() - fetch_start).total_seconds()
             logger.info("-" * 80)
             logger.info(f"📊 GMAIL FETCH SUMMARY:")
-            logger.info(f"   Total found: {total_found} email(s)")
-            logger.info(f"   Successfully fetched: {fetch_count} email(s)")
+            logger.info(f"   Successfully parsed: {fetch_count} email(s)")
             logger.info(f"   Errors: {error_count} email(s)")
             logger.info(f"   Duration: {fetch_duration:.2f}s")
             logger.info("=" * 80)
             
-            # Disconnect after successful fetch
-            logger.info("   🔌 Disconnecting after fetch...")
-            await self.disconnect()
-            
             return unified_emails
+            
+        except asyncio.TimeoutError:
+            fetch_duration = (datetime.utcnow() - fetch_start).total_seconds()
+            logger.error(f"   ❌ TIMEOUT: Fetch operation timed out after {fetch_duration:.2f}s (60s limit)")
+            return []
         except Exception as e:
             logger.error(f"❌ Error fetching Gmail emails: {e}", exc_info=True)
-            # Ensure we disconnect even on error
-            try:
-                await self.disconnect()
-            except Exception as disconnect_error:
-                logger.warning(f"   ⚠️  Error during disconnect after error: {disconnect_error}")
             return []
     
     @with_error_boundary("Failed to send Gmail email")

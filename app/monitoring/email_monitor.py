@@ -184,7 +184,7 @@ class EmailNotificationMonitor:
             emails = await self.orchestrator.get_all_emails(
                 source_types=enabled_source_types,
                 unread_only=False,  # Check all emails, not just unread
-                limit=50
+                limit=10  # Reduced from 50 to avoid large pickling issues with ProcessPoolExecutor
             )
             
             fetch_duration = (datetime.utcnow() - fetch_start).total_seconds()
@@ -415,13 +415,33 @@ class EmailNotificationMonitor:
         
         # Then run periodically
         check_count = 1
+        logger.info(f"🔄 Starting periodic check loop (interval: {self.check_interval_seconds}s)")
         while self._running:
             logger.info(f"⏳ Next check in {self.check_interval_seconds}s (check #{check_count} completed)")
-            await asyncio.sleep(self.check_interval_seconds)
-            if self._running:
-                check_count += 1
-                logger.info(f"🔄 Starting periodic check #{check_count}...")
-                await self._check_and_notify()
+            logger.info(f"   Monitor running: {self._running}, check_count: {check_count}")
+            try:
+                logger.info(f"   Sleeping for {self.check_interval_seconds} seconds...")
+                await asyncio.sleep(self.check_interval_seconds)
+                logger.info(f"   ✅ Sleep completed, checking if still running...")
+                if self._running:
+                    check_count += 1
+                    logger.info(f"🔄 Starting periodic check #{check_count}...")
+                    try:
+                        await self._check_and_notify()
+                        logger.debug(f"   Periodic check #{check_count} completed")
+                    except Exception as e:
+                        logger.error(f"❌ Error in periodic check #{check_count}: {e}", exc_info=True)
+                        # Continue the loop even if check fails
+                else:
+                    logger.info("   Monitor stopped, exiting loop")
+                    break
+            except asyncio.CancelledError:
+                logger.info("   Monitor task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"❌ Error in monitor loop: {e}", exc_info=True)
+                # Wait a bit before retrying to avoid tight error loop
+                await asyncio.sleep(10)
     
     def stop(self):
         """Stop the email monitoring service."""
