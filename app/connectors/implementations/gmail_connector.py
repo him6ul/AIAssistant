@@ -4,10 +4,10 @@ Gmail connector implementation using Google Gmail API.
 
 import os
 import email
+import imaplib
 from email.header import decode_header
 from typing import List, Optional, Callable, Dict, Any
 from datetime import datetime
-from aioimaplib import IMAP4_SSL
 from app.connectors.base import MailSourceConnector, ConnectorCapabilities
 from app.connectors.models import UnifiedEmail, SourceType, EmailPriority
 from app.connectors.middleware import with_retry, RetryConfig, with_error_boundary, with_logging
@@ -45,7 +45,7 @@ class GmailConnector(MailSourceConnector):
         self.imap_port = imap_port or int(os.getenv("EMAIL_IMAP_PORT", "993"))
         self.username = username or os.getenv("EMAIL_IMAP_USERNAME")
         self.password = password or os.getenv("EMAIL_IMAP_PASSWORD")
-        self._imap: Optional[IMAP4_SSL] = None
+        self._imap: Optional[imaplib.IMAP4_SSL] = None
         self._connected = False
         self._event_callbacks: List[Callable[[UnifiedEmail], None]] = []
         
@@ -59,10 +59,10 @@ class GmailConnector(MailSourceConnector):
     @with_logging()
     @with_retry(RetryConfig(max_retries=3))
     async def connect(self) -> bool:
-        """Connect to Gmail via IMAP using async library."""
+        """Connect to Gmail via IMAP using synchronous imaplib in executor."""
         try:
             logger.info("=" * 80)
-            logger.info("🔌 GMAIL CONNECTOR: Starting connection (async IMAP)...")
+            logger.info("🔌 GMAIL CONNECTOR: Starting connection (IMAP in executor)...")
             logger.info(f"   Server: {self.imap_server}:{self.imap_port}")
             logger.info(f"   Username: {self.username}")
             logger.info(f"   Password: {'SET' if self.password else 'NOT SET'}")
@@ -71,43 +71,31 @@ class GmailConnector(MailSourceConnector):
                 logger.error("❌ Gmail credentials not configured")
                 return False
             
-            # Use async IMAP library - no need for run_in_executor
+            # Use synchronous imaplib in executor to avoid hanging issues
             logger.info("   Establishing SSL connection to IMAP server...")
-            self._imap = IMAP4_SSL(host=self.imap_server, port=self.imap_port)
+            loop = asyncio.get_event_loop()
             
-            # CRITICAL FIX: aioimaplib's create_client() uses create_task() which doesn't await
-            # The connection task is scheduled but might not execute immediately if event loop is busy
-            # Give the event loop a chance to schedule and start the connection task
-            await asyncio.sleep(0.1)  # Small yield to let connection task start
+            def _connect():
+                """Connect synchronously in executor thread."""
+                imap = imaplib.IMAP4_SSL(self.imap_server, self.imap_port)
+                imap.login(self.username, self.password)
+                return imap
             
-            # Add timeout to wait_hello_from_server
             try:
-                await asyncio.wait_for(
-                    self._imap.wait_hello_from_server(),
-                    timeout=10.0
+                self._imap = await asyncio.wait_for(
+                    loop.run_in_executor(None, _connect),
+                    timeout=15.0
                 )
                 logger.info("   ✅ SSL connection established")
-            except asyncio.TimeoutError:
-                logger.error("   ❌ TIMEOUT: wait_hello_from_server timed out (10s limit)")
-                self._imap = None
-                return False
-            
-            logger.info("   Authenticating with username and password...")
-            try:
-                await asyncio.wait_for(
-                    self._imap.login(self.username, self.password),
-                    timeout=10.0
-                )
                 logger.info("   ✅ Authentication successful")
+                self._connected = True
+                logger.info("✅ Gmail connector connected successfully")
+                logger.info("=" * 80)
+                return True
             except asyncio.TimeoutError:
-                logger.error("   ❌ TIMEOUT: login timed out (10s limit)")
+                logger.error("   ❌ TIMEOUT: Connection timed out (15s limit)")
                 self._imap = None
                 return False
-            
-            self._connected = True
-            logger.info("✅ Gmail connector connected successfully")
-            logger.info("=" * 80)
-            return True
         except Exception as e:
             logger.error(f"❌ Error connecting to Gmail: {e}", exc_info=True)
             self._imap = None
@@ -118,7 +106,11 @@ class GmailConnector(MailSourceConnector):
         """Disconnect from Gmail IMAP."""
         if self._imap:
             try:
-                await self._imap.logout()
+                loop = asyncio.get_event_loop()
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: self._imap.logout()),
+                    timeout=5.0
+                )
             except Exception as e:
                 logger.warning(f"Error during logout: {e}")
             self._imap = None
@@ -154,49 +146,55 @@ class GmailConnector(MailSourceConnector):
         since_display = since.strftime('%Y-%m-%d %H:%M:%S UTC') if since else 'None (all emails)'
         logger.info(f"     - Since: {since_display}")
         
-        # Disconnect any existing connection completely before creating a new one
-        # Just clear the connection state - don't try to disconnect (it might hang)
-        logger.info("   🔄 Clearing any existing connection state...")
+        # Always create a fresh connection for each fetch to avoid stale connection issues
+        # The connection reuse was causing hangs with stale connections
+        logger.info("   🔌 Creating fresh connection for this fetch...")
         if self._imap:
-            # Don't call disconnect() - just clear the state to avoid hanging
+            # Try to close existing connection gracefully, but don't wait if it hangs
+            try:
+                loop = asyncio.get_event_loop()
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: self._imap.logout() if self._imap else None),
+                    timeout=2.0
+                )
+            except:
+                pass  # Ignore errors when closing stale connection
             self._imap = None
             self._connected = False
-            logger.info("   ✅ Connection state cleared")
         
-        # Create a fresh connection for this fetch
-        logger.info("   🔌 Creating fresh IMAP connection for this fetch...")
         connect_success = await self.connect()
         if not connect_success:
-            logger.error("   ❌ Failed to create fresh connection")
+            logger.error("   ❌ Failed to connect")
             return []
-        logger.info("   ✅ Fresh connection established")
         
         try:
             folder_name = folder or "INBOX"
             
-            # Select folder with timeout (using async IMAP)
+            # Select folder with timeout (run in executor to avoid hanging)
             logger.info(f"   Selecting folder: {folder_name}")
             select_start = datetime.utcnow()
             try:
-                # Use async IMAP select - no executor needed!
-                result = await asyncio.wait_for(
-                    self._imap.select(folder_name),
+                # Run select in executor using synchronous imaplib
+                def _select_folder():
+                    """Select folder synchronously in executor thread."""
+                    status, data = self._imap.select(folder_name)
+                    return status
+                
+                loop = asyncio.get_event_loop()
+                status = await asyncio.wait_for(
+                    loop.run_in_executor(None, _select_folder),
                     timeout=10.0
                 )
                 select_duration = (datetime.utcnow() - select_start).total_seconds()
-                # Extract status from Response object
-                status = result.result if hasattr(result, 'result') else 'OK'
                 logger.info(f"   ✅ Folder selected: {status} (took {select_duration:.2f}s)")
             except asyncio.TimeoutError:
                 select_duration = (datetime.utcnow() - select_start).total_seconds()
                 logger.error(f"   ❌ TIMEOUT: Selecting folder {folder_name} timed out after {select_duration:.2f}s (10s limit)")
-                await self.disconnect()
                 return []
             except Exception as select_error:
                 select_duration = (datetime.utcnow() - select_start).total_seconds()
                 logger.error(f"   ❌ Error selecting folder {folder_name} after {select_duration:.2f}s: {select_error}", exc_info=True)
-                await self.disconnect()
-                raise
+                return []
             
             # Build search criteria
             # For Gmail, we can search by date more precisely
@@ -216,18 +214,21 @@ class GmailConnector(MailSourceConnector):
             search_query = " ".join(search_criteria) if search_criteria else "ALL"
             logger.info(f"   🔍 IMAP search query: '{search_query}'")
             
-            # Search for emails (using async IMAP)
+            # Search for emails (run in executor to avoid hanging)
             logger.info("   Searching for emails...")
             search_start = datetime.utcnow()
             try:
-                result = await asyncio.wait_for(
-                    self._imap.search(None, search_query),
+                # Run search in executor using synchronous imaplib
+                def _search_emails():
+                    """Search emails synchronously in executor thread."""
+                    status, messages = self._imap.search(None, search_query)
+                    return status, messages
+                
+                loop = asyncio.get_event_loop()
+                status, messages = await asyncio.wait_for(
+                    loop.run_in_executor(None, _search_emails),
                     timeout=10.0
                 )
-                # aioimaplib returns Response object
-                # Response has result (status) and lines (messages)
-                status = result.result if hasattr(result, 'result') else 'OK'
-                messages = result.lines if hasattr(result, 'lines') else []
                 search_duration = (datetime.utcnow() - search_start).total_seconds()
             except asyncio.TimeoutError:
                 search_duration = (datetime.utcnow() - search_start).total_seconds()
@@ -241,29 +242,15 @@ class GmailConnector(MailSourceConnector):
                 logger.error(f"   ❌ Failed to search Gmail (status: {status})")
                 return []
             
-            # Get email IDs
-            # aioimaplib returns messages as list of bytes
+            # Get email IDs from imaplib response
             if not messages or len(messages) == 0:
                 logger.info("   ℹ️  No emails found matching search criteria")
                 return []
             
-            # Find the line with email IDs (usually the first line with numbers)
-            email_ids_str = None
-            for line in messages:
-                if line is None:
-                    continue
-                if isinstance(line, bytes):
-                    line_str = line.decode('utf-8', errors='ignore')
-                    # Check if line contains numbers (email IDs)
-                    if line_str.strip() and any(c.isdigit() for c in line_str):
-                        email_ids_str = line_str.strip()
-                        break
-                elif isinstance(line, str):
-                    if line.strip() and any(c.isdigit() for c in line):
-                        email_ids_str = line.strip()
-                        break
+            # imaplib returns messages as list of bytes
+            email_ids_str = messages[0].decode('utf-8', errors='ignore') if isinstance(messages[0], bytes) else str(messages[0])
             
-            if not email_ids_str:
+            if not email_ids_str or not email_ids_str.strip():
                 logger.info("   ℹ️  No emails found matching search criteria")
                 return []
             
@@ -286,12 +273,17 @@ class GmailConnector(MailSourceConnector):
                     email_id_str = email_id.decode() if isinstance(email_id, bytes) else str(email_id)
                     logger.debug(f"   [{idx}/{len(email_ids)}] Fetching email ID: {email_id_str}")
                     
-                    # Fetch both the email and its flags (using async IMAP)
-                    result = await asyncio.wait_for(
-                        self._imap.fetch(email_id_str, "(RFC822 FLAGS)"),
+                    # Fetch both the email and its flags (run in executor to avoid hanging)
+                    def _fetch_email():
+                        """Fetch email synchronously in executor thread."""
+                        status, msg_data = self._imap.fetch(email_id_str, "(RFC822 FLAGS)")
+                        return status, msg_data
+                    
+                    loop = asyncio.get_event_loop()
+                    status, msg_data = await asyncio.wait_for(
+                        loop.run_in_executor(None, _fetch_email),
                         timeout=10.0
                     )
-                    status, msg_data = result
                     
                     if status != "OK" or not msg_data or not msg_data[0]:
                         logger.warning(f"   ⚠️  Failed to fetch email {email_id_str}: status={status}")
