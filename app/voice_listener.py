@@ -46,7 +46,10 @@ def get_stop_words() -> List[str]:
         "jarvis stop",
         "shut down",
         "exit",
-        "quit"
+        "quit",
+        "bye",
+        "goodbye",
+        "see you later"
     ]
     logger.debug(f"Using default stop words: {default_stop_words}")
     return default_stop_words
@@ -91,6 +94,7 @@ class VoiceListener:
         
         self._listening = False
         self._recording = False
+        self._continuous_mode = False  # After first command, continue listening without wake word
         self._stop_check_interval = 0.5  # Check for stop commands every 0.5 seconds
         self._stop_listener_task: Optional[asyncio.Task] = None  # Background task for listening to stop commands
     
@@ -245,15 +249,20 @@ class VoiceListener:
                         )
                         
                         if text:
+                            import string
                             text_lower = text.lower().strip()
+                            text_clean = text_lower.translate(str.maketrans('', '', string.punctuation))
                             stop_keywords = get_stop_words()
                             
                             # Check if any stop keyword is in the transcribed text
-                            # Check multiple ways: contains, starts with, ends with
+                            # Check multiple ways: contains, starts with, ends with (with and without punctuation)
                             is_stop = any(
                                 keyword in text_lower or 
+                                keyword in text_clean or
                                 text_lower.startswith(keyword) or 
-                                text_lower.endswith(keyword)
+                                text_lower.endswith(keyword) or
+                                text_clean.startswith(keyword) or
+                                text_clean.endswith(keyword)
                                 for keyword in stop_keywords
                             )
                             
@@ -274,6 +283,92 @@ class VoiceListener:
                 await asyncio.sleep(0.5)
         
         logger.debug("Background stop listener stopped")
+    
+    async def _record_and_process_command(self, require_wake_word: bool = True):
+        """
+        Record a voice command and process it.
+        
+        Args:
+            require_wake_word: If True, wait for wake word first. If False, start recording immediately.
+        """
+        if require_wake_word:
+            # Wait for wake word first (handled by main loop)
+            return
+        
+        # Start recording immediately (continuous mode - no wake word needed)
+        logger.info("Recording next command (continuous mode - no wake word needed)...")
+        
+        # Brief pause for audio system to settle
+        await asyncio.sleep(0.3)
+        
+        # Record command with Voice Activity Detection
+        audio_frames = []
+        silence_frames = 0
+        max_silence_frames = 90  # ~3 seconds of silence before stopping (increased for natural pauses)
+        speech_detected = False
+        max_recording_frames = 300  # ~10 seconds max (increased for longer commands)
+        energy_threshold = 400  # Lowered to catch quieter speech
+        
+        # Skip initial frames to avoid any echo
+        skip_initial_frames = 5  # Reduced since no TTS just happened
+        for i in range(skip_initial_frames):
+            try:
+                frame = self.audio_stream.read(512, exception_on_overflow=False)
+                await asyncio.sleep(0.032)
+            except Exception as e:
+                logger.warning(f"Error skipping initial frame {i}: {e}")
+                break
+        
+        # Record with VAD - improved to handle natural pauses in speech
+        logger.debug(f"Starting continuous mode VAD: max_frames={max_recording_frames}, energy_threshold={energy_threshold}, max_silence={max_silence_frames}")
+        for i in range(max_recording_frames):
+            try:
+                frame = self.audio_stream.read(512, exception_on_overflow=False)
+                
+                if len(frame) >= 2:
+                    samples = struct.unpack(f'{len(frame)//2}h', frame)
+                    energy = sum(abs(s) for s in samples) / len(samples) if samples else 0
+                    
+                    if energy > energy_threshold:
+                        if not speech_detected:
+                            logger.info(f"Speech detected at frame {i} (energy={energy:.0f})")
+                        speech_detected = True
+                        silence_frames = 0
+                        audio_frames.append(frame)
+                    elif speech_detected:
+                        # Speech was detected, now we're in a pause
+                        # Continue recording during brief pauses (natural in speech)
+                        audio_frames.append(frame)  # Always record during pauses after speech
+                        silence_frames += 1
+                        if silence_frames >= max_silence_frames:
+                            logger.info(f"Extended silence detected after speech ({silence_frames} frames), stopping recording (frame {i}, total frames: {len(audio_frames)})")
+                            break
+                    else:
+                        # No speech detected yet - wait for user to start speaking
+                        # Record initial frames to catch the start of speech
+                        silence_frames += 1
+                        if silence_frames < 30:  # Wait up to ~1 second for speech to start
+                            audio_frames.append(frame)
+                        # If too much silence at start without speech, might be background noise
+                
+                await asyncio.sleep(0.032)
+            except Exception as e:
+                logger.error(f"Error reading audio frame {i}: {e}", exc_info=True)
+                break
+        
+        if not audio_frames:
+            logger.warning("No audio frames recorded in continuous mode")
+            return
+        
+        audio_data = b''.join(audio_frames)
+        duration_seconds = len(audio_data) / (self.sample_rate * self.channels * self.sample_width)
+        logger.info(f"Recorded {len(audio_frames)} frames ({duration_seconds:.2f}s) in continuous mode")
+        
+        if duration_seconds < 0.1:
+            logger.warning(f"Audio too short ({duration_seconds:.2f}s)")
+            return
+        
+        await self._process_voice_command(audio_data)
     
     async def _process_voice_command(self, audio_data: bytes):
         """
@@ -307,15 +402,21 @@ class VoiceListener:
             logger.info(f"✅ Transcribed ({len(text)} chars): '{text}'")
             
             # Check for stop command first (before any other processing)
+            # Strip punctuation for better matching
+            import string
             text_lower = text.lower().strip()
+            text_clean = text_lower.translate(str.maketrans('', '', string.punctuation))
             stop_keywords = get_stop_words()
             
             # Check for stop keywords more aggressively
-            # Also check if text starts with or contains stop words
+            # Check both with and without punctuation
             is_stop_command = any(
                 keyword in text_lower or 
+                keyword in text_clean or
                 text_lower.startswith(keyword) or 
-                text_lower.endswith(keyword)
+                text_lower.endswith(keyword) or
+                text_clean.startswith(keyword) or
+                text_clean.endswith(keyword)
                 for keyword in stop_keywords
             )
             
@@ -389,12 +490,32 @@ class VoiceListener:
             # Call callback if provided
             if self.callback:
                 await self.callback(text, content, response)
+            
+            # After processing command, enter continuous listening mode
+            # User can give another command without saying wake word again
+            if self._listening:
+                logger.info("Entering continuous listening mode - ready for next command")
+                self._continuous_mode = True
+                # Brief pause after response, then start listening for next command
+                await asyncio.sleep(1.0)  # Give user time to process response
+                # Start recording next command (without wake word)
+                # This will loop back to _process_voice_command if another command is detected
+                try:
+                    await self._record_and_process_command(require_wake_word=False)
+                except Exception as e:
+                    logger.error(f"Error in continuous mode recording: {e}", exc_info=True)
+                    self._continuous_mode = False  # Exit continuous mode on error
         
         except Exception as e:
             logger.error(f"Voice command processing failed: {e}", exc_info=True)
             # Run TTS in executor to avoid blocking async event loop
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self.tts_engine.speak, "I'm sorry, I encountered an error processing your request.")
+            # Still enter continuous mode after error
+            if self._listening:
+                self._continuous_mode = True
+                await asyncio.sleep(0.5)
+                await self._record_and_process_command(require_wake_word=False)
     
     async def start(self):
         """
@@ -438,6 +559,7 @@ class VoiceListener:
                     
                     if keyword_index >= 0:
                         logger.info("Wake word detected!")
+                        self._continuous_mode = False  # Reset continuous mode when wake word is detected
                         
                         # Speak response and WAIT for it to complete
                         loop = asyncio.get_event_loop()
@@ -445,8 +567,9 @@ class VoiceListener:
                         await loop.run_in_executor(None, self.tts_engine.speak, "Yes, how can I help?", True)
                         logger.info("Wake word response completed")
                         
-                        # Wait additional time to ensure audio system settles and user starts speaking
-                        await asyncio.sleep(0.8)  # Brief pause for user to start speaking
+                        # Start recording immediately - we'll use VAD to detect when user actually speaks
+                        # This avoids missing the beginning of the user's question
+                        logger.info("Starting to record voice command immediately...")
                         
                         # Record command with Voice Activity Detection (simple energy-based)
                         logger.info("Recording voice command (waiting for speech)...")
@@ -454,22 +577,30 @@ class VoiceListener:
                         
                         # Simple VAD: detect when user starts speaking (energy threshold)
                         silence_frames = 0
-                        max_silence_frames = 30  # ~1 second of silence before stopping
+                        max_silence_frames = 90  # ~3 seconds of silence before stopping (increased for natural pauses)
                         speech_detected = False
-                        max_recording_frames = 200  # ~6.5 seconds max
-                        energy_threshold = 500  # Adjust based on testing
+                        max_recording_frames = 300  # ~10 seconds max (increased for longer commands)
+                        energy_threshold = 400  # Lowered to catch quieter speech
                         
-                        # Skip initial frames that might contain TTS echo
-                        skip_initial_frames = 20  # Skip first ~0.6 seconds
-                        for _ in range(skip_initial_frames):
+                        # Brief wait for audio system to settle (reduced from 0.8s)
+                        logger.debug("Brief pause (0.3s) for audio system to settle...")
+                        await asyncio.sleep(0.3)
+                        
+                        # Skip fewer initial frames - just enough to avoid TTS echo
+                        # But start recording immediately so we don't miss user's speech
+                        skip_initial_frames = 10  # Skip first ~0.3 seconds (reduced from 20)
+                        logger.debug(f"Skipping first {skip_initial_frames} frames to avoid TTS echo...")
+                        for i in range(skip_initial_frames):
                             try:
                                 frame = self.audio_stream.read(512, exception_on_overflow=False)
                                 await asyncio.sleep(0.032)
                             except Exception as e:
-                                logger.warning(f"Error skipping initial frames: {e}")
+                                logger.warning(f"Error skipping initial frame {i}: {e}")
                                 break
+                        logger.debug("Finished skipping initial frames, starting VAD recording...")
                         
-                        # Now record with VAD
+                        # Now record with VAD - improved to handle natural pauses in speech
+                        logger.debug(f"Starting VAD loop: max_frames={max_recording_frames}, energy_threshold={energy_threshold}, max_silence={max_silence_frames}")
                         for i in range(max_recording_frames):
                             try:
                                 frame = self.audio_stream.read(512, exception_on_overflow=False)
@@ -481,27 +612,33 @@ class VoiceListener:
                                     energy = sum(abs(s) for s in samples) / len(samples) if samples else 0
                                     
                                     if energy > energy_threshold:
+                                        if not speech_detected:
+                                            logger.info(f"Speech detected at frame {i} (energy={energy:.0f})")
                                         speech_detected = True
                                         silence_frames = 0
                                         audio_frames.append(frame)
                                     elif speech_detected:
-                                        # Speech was detected, now check for silence
-                                        audio_frames.append(frame)  # Still record during brief pauses
+                                        # Speech was detected, now we're in a pause
+                                        # Continue recording during brief pauses (natural in speech)
+                                        audio_frames.append(frame)  # Always record during pauses after speech
                                         silence_frames += 1
                                         if silence_frames >= max_silence_frames:
-                                            logger.info(f"Silence detected after speech, stopping recording (frame {i})")
+                                            logger.info(f"Extended silence detected after speech ({silence_frames} frames), stopping recording (frame {i}, total frames: {len(audio_frames)})")
                                             break
                                     else:
-                                        # No speech detected yet, keep waiting
+                                        # No speech detected yet - wait for user to start speaking
+                                        # Record initial frames to catch the start of speech
                                         silence_frames += 1
-                                        if silence_frames < 10:  # Allow brief initial silence
+                                        if silence_frames < 30:  # Wait up to ~1 second for speech to start
                                             audio_frames.append(frame)
-                                        # If too much silence at start, might be background noise
+                                        # If too much silence at start without speech, might be background noise
                                 
                                 await asyncio.sleep(0.032)  # ~31 frames per second
                             except Exception as e:
-                                logger.warning(f"Error reading audio frame {i}: {e}")
+                                logger.error(f"Error reading audio frame {i}: {e}", exc_info=True)
                                 break
+                        
+                        logger.info(f"VAD loop completed: speech_detected={speech_detected}, frames_recorded={len(audio_frames)}")
                         
                         if not audio_frames:
                             logger.warning("No audio frames recorded")
@@ -519,6 +656,7 @@ class VoiceListener:
                             logger.warning(f"Audio too short ({duration_seconds:.2f}s), may not transcribe well")
                         
                         await self._process_voice_command(audio_data)
+                    
                 
                 else:
                     # No Porcupine, just listen continuously (simplified)
@@ -596,7 +734,7 @@ def get_voice_listener() -> VoiceListener:
         # Force reload .env file to pick up latest changes
         load_dotenv(override=True)
         
-        wake_word = os.getenv("WAKE_WORD", "hey assistant")
+        wake_word = os.getenv("WAKE_WORD", "jarvis")  # Default to "jarvis" instead of "hey assistant"
         logger.info(f"Initializing voice listener with wake word: '{wake_word}'")
         
         _listener = VoiceListener(
