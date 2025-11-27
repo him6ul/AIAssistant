@@ -3,11 +3,11 @@ Gmail connector implementation using Google Gmail API.
 """
 
 import os
-import imaplib
 import email
 from email.header import decode_header
 from typing import List, Optional, Callable, Dict, Any
 from datetime import datetime
+from aioimaplib import IMAP4_SSL
 from app.connectors.base import MailSourceConnector, ConnectorCapabilities
 from app.connectors.models import UnifiedEmail, SourceType, EmailPriority
 from app.connectors.middleware import with_retry, RetryConfig, with_error_boundary, with_logging
@@ -45,7 +45,7 @@ class GmailConnector(MailSourceConnector):
         self.imap_port = imap_port or int(os.getenv("EMAIL_IMAP_PORT", "993"))
         self.username = username or os.getenv("EMAIL_IMAP_USERNAME")
         self.password = password or os.getenv("EMAIL_IMAP_PASSWORD")
-        self._imap: Optional[imaplib.IMAP4_SSL] = None
+        self._imap: Optional[IMAP4_SSL] = None
         self._connected = False
         self._event_callbacks: List[Callable[[UnifiedEmail], None]] = []
         
@@ -59,35 +59,68 @@ class GmailConnector(MailSourceConnector):
     @with_logging()
     @with_retry(RetryConfig(max_retries=3))
     async def connect(self) -> bool:
-        """Connect to Gmail via IMAP."""
+        """Connect to Gmail via IMAP using async library."""
         try:
+            logger.info("=" * 80)
+            logger.info("🔌 GMAIL CONNECTOR: Starting connection (async IMAP)...")
+            logger.info(f"   Server: {self.imap_server}:{self.imap_port}")
+            logger.info(f"   Username: {self.username}")
+            logger.info(f"   Password: {'SET' if self.password else 'NOT SET'}")
+            
             if not self.username or not self.password:
-                logger.error("Gmail credentials not configured")
+                logger.error("❌ Gmail credentials not configured")
                 return False
             
-            # IMAP operations are blocking, so run in executor
-            loop = asyncio.get_event_loop()
-            self._imap = await loop.run_in_executor(
-                None,
-                lambda: imaplib.IMAP4_SSL(self.imap_server, self.imap_port)
-            )
-            await loop.run_in_executor(
-                None,
-                lambda: self._imap.login(self.username, self.password)
-            )
+            # Use async IMAP library - no need for run_in_executor
+            logger.info("   Establishing SSL connection to IMAP server...")
+            self._imap = IMAP4_SSL(host=self.imap_server, port=self.imap_port)
+            
+            # CRITICAL FIX: aioimaplib's create_client() uses create_task() which doesn't await
+            # The connection task is scheduled but might not execute immediately if event loop is busy
+            # Give the event loop a chance to schedule and start the connection task
+            await asyncio.sleep(0.1)  # Small yield to let connection task start
+            
+            # Add timeout to wait_hello_from_server
+            try:
+                await asyncio.wait_for(
+                    self._imap.wait_hello_from_server(),
+                    timeout=10.0
+                )
+                logger.info("   ✅ SSL connection established")
+            except asyncio.TimeoutError:
+                logger.error("   ❌ TIMEOUT: wait_hello_from_server timed out (10s limit)")
+                self._imap = None
+                return False
+            
+            logger.info("   Authenticating with username and password...")
+            try:
+                await asyncio.wait_for(
+                    self._imap.login(self.username, self.password),
+                    timeout=10.0
+                )
+                logger.info("   ✅ Authentication successful")
+            except asyncio.TimeoutError:
+                logger.error("   ❌ TIMEOUT: login timed out (10s limit)")
+                self._imap = None
+                return False
             
             self._connected = True
-            logger.info("Gmail connector connected successfully")
+            logger.info("✅ Gmail connector connected successfully")
+            logger.info("=" * 80)
             return True
         except Exception as e:
-            logger.error(f"Error connecting to Gmail: {e}")
+            logger.error(f"❌ Error connecting to Gmail: {e}", exc_info=True)
+            self._imap = None
+            self._connected = False
             return False
     
     async def disconnect(self) -> None:
         """Disconnect from Gmail IMAP."""
         if self._imap:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._imap.logout)
+            try:
+                await self._imap.logout()
+            except Exception as e:
+                logger.warning(f"Error during logout: {e}")
             self._imap = None
         self._connected = False
         logger.info("Gmail connector disconnected")
@@ -110,78 +143,232 @@ class GmailConnector(MailSourceConnector):
             unread_only: Only fetch unread emails
             since: Only fetch emails after this timestamp
         """
-        if not self._connected or not self._imap:
-            logger.error("Gmail connector not connected")
+        fetch_start = datetime.utcnow()
+        logger.info("=" * 80)
+        logger.info("📬 GMAIL CONNECTOR: Starting email fetch...")
+        logger.info(f"   Parameters:")
+        logger.info(f"     - Limit: {limit}")
+        folder_display = folder or "INBOX (default)"
+        logger.info(f"     - Folder: {folder_display}")
+        logger.info(f"     - Unread only: {unread_only}")
+        since_display = since.strftime('%Y-%m-%d %H:%M:%S UTC') if since else 'None (all emails)'
+        logger.info(f"     - Since: {since_display}")
+        
+        # Disconnect any existing connection completely before creating a new one
+        # Just clear the connection state - don't try to disconnect (it might hang)
+        logger.info("   🔄 Clearing any existing connection state...")
+        if self._imap:
+            # Don't call disconnect() - just clear the state to avoid hanging
+            self._imap = None
+            self._connected = False
+            logger.info("   ✅ Connection state cleared")
+        
+        # Create a fresh connection for this fetch
+        logger.info("   🔌 Creating fresh IMAP connection for this fetch...")
+        connect_success = await self.connect()
+        if not connect_success:
+            logger.error("   ❌ Failed to create fresh connection")
             return []
+        logger.info("   ✅ Fresh connection established")
         
         try:
-            loop = asyncio.get_event_loop()
             folder_name = folder or "INBOX"
             
-            # Select folder
-            await loop.run_in_executor(None, lambda: self._imap.select(folder_name))
+            # Select folder with timeout (using async IMAP)
+            logger.info(f"   Selecting folder: {folder_name}")
+            select_start = datetime.utcnow()
+            try:
+                # Use async IMAP select - no executor needed!
+                result = await asyncio.wait_for(
+                    self._imap.select(folder_name),
+                    timeout=10.0
+                )
+                select_duration = (datetime.utcnow() - select_start).total_seconds()
+                # Extract status from Response object
+                status = result.result if hasattr(result, 'result') else 'OK'
+                logger.info(f"   ✅ Folder selected: {status} (took {select_duration:.2f}s)")
+            except asyncio.TimeoutError:
+                select_duration = (datetime.utcnow() - select_start).total_seconds()
+                logger.error(f"   ❌ TIMEOUT: Selecting folder {folder_name} timed out after {select_duration:.2f}s (10s limit)")
+                await self.disconnect()
+                return []
+            except Exception as select_error:
+                select_duration = (datetime.utcnow() - select_start).total_seconds()
+                logger.error(f"   ❌ Error selecting folder {folder_name} after {select_duration:.2f}s: {select_error}", exc_info=True)
+                await self.disconnect()
+                raise
             
             # Build search criteria
             # For Gmail, we can search by date more precisely
             search_criteria = []
             if unread_only:
                 search_criteria.append("UNSEEN")
+                logger.info("   🔍 Search filter: UNSEEN (unread emails only)")
             if since:
                 # IMAP SINCE uses date only, but we can filter by time after fetching
                 # Use SINCE for date filtering
-                search_criteria.append(f'SINCE {since.strftime("%d-%b-%Y")}')
+                since_str = since.strftime("%d-%b-%Y")
+                search_criteria.append(f'SINCE {since_str}')
+                logger.info(f"   🔍 Search filter: SINCE {since_str}")
             
             # Gmail supports searching for important emails using the \Important flag
             # But we'll fetch all and filter by importance after parsing headers
             search_query = " ".join(search_criteria) if search_criteria else "ALL"
+            logger.info(f"   🔍 IMAP search query: '{search_query}'")
             
-            # Search for emails
-            status, messages = await loop.run_in_executor(
-                None,
-                lambda: self._imap.search(None, search_query)
-            )
+            # Search for emails (using async IMAP)
+            logger.info("   Searching for emails...")
+            search_start = datetime.utcnow()
+            try:
+                result = await asyncio.wait_for(
+                    self._imap.search(None, search_query),
+                    timeout=10.0
+                )
+                # aioimaplib returns Response object
+                # Response has result (status) and lines (messages)
+                status = result.result if hasattr(result, 'result') else 'OK'
+                messages = result.lines if hasattr(result, 'lines') else []
+                search_duration = (datetime.utcnow() - search_start).total_seconds()
+            except asyncio.TimeoutError:
+                search_duration = (datetime.utcnow() - search_start).total_seconds()
+                logger.error(f"   ❌ TIMEOUT: Search timed out after {search_duration:.2f}s (10s limit)")
+                return []
+            except Exception as search_error:
+                logger.error(f"   ❌ Error during search: {search_error}", exc_info=True)
+                return []
             
             if status != "OK":
-                logger.error("Failed to search Gmail")
+                logger.error(f"   ❌ Failed to search Gmail (status: {status})")
                 return []
             
             # Get email IDs
-            email_ids = messages[0].split()[:limit]
+            # aioimaplib returns messages as list of bytes
+            if not messages or len(messages) == 0:
+                logger.info("   ℹ️  No emails found matching search criteria")
+                return []
+            
+            # Find the line with email IDs (usually the first line with numbers)
+            email_ids_str = None
+            for line in messages:
+                if line is None:
+                    continue
+                if isinstance(line, bytes):
+                    line_str = line.decode('utf-8', errors='ignore')
+                    # Check if line contains numbers (email IDs)
+                    if line_str.strip() and any(c.isdigit() for c in line_str):
+                        email_ids_str = line_str.strip()
+                        break
+                elif isinstance(line, str):
+                    if line.strip() and any(c.isdigit() for c in line):
+                        email_ids_str = line.strip()
+                        break
+            
+            if not email_ids_str:
+                logger.info("   ℹ️  No emails found matching search criteria")
+                return []
+            
+            all_email_ids = email_ids_str.split()
+            total_found = len(all_email_ids)
+            email_ids = all_email_ids[:limit]
+            
+            logger.info(f"   ✅ Search completed in {search_duration:.2f}s")
+            logger.info(f"   📊 Found {total_found} total email(s) matching criteria")
+            logger.info(f"   📊 Will fetch {len(email_ids)} email(s) (limited to {limit})")
             
             # Fetch emails with flags to check for IMPORTANT flag
             unified_emails = []
-            for email_id in email_ids:
+            fetch_count = 0
+            error_count = 0
+            
+            logger.info("   📥 Fetching individual emails...")
+            for idx, email_id in enumerate(email_ids, 1):
                 try:
-                    # Fetch both the email and its flags
-                    status, msg_data = await loop.run_in_executor(
-                        None,
-                        lambda eid=email_id: self._imap.fetch(eid, "(RFC822 FLAGS)")
-                    )
+                    email_id_str = email_id.decode() if isinstance(email_id, bytes) else str(email_id)
+                    logger.debug(f"   [{idx}/{len(email_ids)}] Fetching email ID: {email_id_str}")
                     
-                    if status == "OK" and msg_data[0]:
-                        raw_email = msg_data[0][1]
-                        email_message = email.message_from_bytes(raw_email)
-                        
-                        # Check flags for \Important
-                        flags_str = ""
-                        if len(msg_data[0]) > 1:
-                            flags_data = msg_data[0][1] if isinstance(msg_data[0][1], bytes) else str(msg_data[0][1])
-                            if b"FLAGS" in flags_data or "FLAGS" in str(flags_data):
-                                # Extract flags
-                                flags_part = msg_data[0][0].decode() if isinstance(msg_data[0][0], bytes) else str(msg_data[0][0])
-                                if "\\Important" in flags_part or "IMPORTANT" in flags_part.upper():
-                                    # Mark as important in raw data
-                                    email_message["X-IMAP-Important"] = "true"
-                        
-                        unified_email = self._convert_imap_email(email_message, email_id.decode())
-                        unified_emails.append(unified_email)
+                    # Fetch both the email and its flags (using async IMAP)
+                    result = await asyncio.wait_for(
+                        self._imap.fetch(email_id_str, "(RFC822 FLAGS)"),
+                        timeout=10.0
+                    )
+                    status, msg_data = result
+                    
+                    if status != "OK" or not msg_data or not msg_data[0]:
+                        logger.warning(f"   ⚠️  Failed to fetch email {email_id_str}: status={status}")
+                        error_count += 1
+                        continue
+                    
+                    # Extract email body and flags
+                    # msg_data structure: [(b'1 (RFC822 {1234}', b'email body...'), b' FLAGS (\\Seen \\Important)')]
+                    raw_email = None
+                    flags_str = ""
+                    is_important_flag = False
+                    
+                    # Find the RFC822 part
+                    for part in msg_data:
+                        if isinstance(part, tuple) and len(part) >= 2:
+                            # Check if this part contains the email body
+                            if isinstance(part[1], bytes) and b"From:" in part[1]:
+                                raw_email = part[1]
+                            # Check for flags
+                            elif isinstance(part[1], bytes) and b"FLAGS" in part[1]:
+                                flags_str = part[1].decode() if isinstance(part[1], bytes) else str(part[1])
+                                if "\\Important" in flags_str or "IMPORTANT" in flags_str.upper():
+                                    is_important_flag = True
+                                    logger.debug(f"      ✅ Found \\Important flag in IMAP flags")
+                    
+                    # Alternative: try to get email from first part
+                    if raw_email is None and len(msg_data) > 0:
+                        for item in msg_data:
+                            if isinstance(item, tuple) and len(item) >= 2:
+                                if isinstance(item[1], bytes) and len(item[1]) > 100:  # Likely the email body
+                                    raw_email = item[1]
+                                    break
+                    
+                    if raw_email is None:
+                        logger.warning(f"   ⚠️  Could not extract email body for {email_id_str}")
+                        error_count += 1
+                        continue
+                    
+                    email_message = email.message_from_bytes(raw_email)
+                    
+                    # Add important flag to headers if found
+                    if is_important_flag:
+                        email_message["X-IMAP-Important"] = "true"
+                    
+                    unified_email = self._convert_imap_email(email_message, email_id_str)
+                    unified_emails.append(unified_email)
+                    fetch_count += 1
+                    
+                    logger.debug(f"      ✅ Converted: '{unified_email.subject[:50]}...' from {unified_email.from_address.get('email', 'Unknown')}")
+                    logger.debug(f"         - Important: {unified_email.is_important}, Priority: {unified_email.priority}")
+                    
                 except Exception as e:
-                    logger.warning(f"Failed to fetch email {email_id}: {e}")
+                    logger.warning(f"   ⚠️  Failed to fetch email {email_id}: {e}", exc_info=True)
+                    error_count += 1
                     continue
+            
+            fetch_duration = (datetime.utcnow() - fetch_start).total_seconds()
+            logger.info("-" * 80)
+            logger.info(f"📊 GMAIL FETCH SUMMARY:")
+            logger.info(f"   Total found: {total_found} email(s)")
+            logger.info(f"   Successfully fetched: {fetch_count} email(s)")
+            logger.info(f"   Errors: {error_count} email(s)")
+            logger.info(f"   Duration: {fetch_duration:.2f}s")
+            logger.info("=" * 80)
+            
+            # Disconnect after successful fetch
+            logger.info("   🔌 Disconnecting after fetch...")
+            await self.disconnect()
             
             return unified_emails
         except Exception as e:
-            logger.error(f"Error fetching Gmail emails: {e}")
+            logger.error(f"❌ Error fetching Gmail emails: {e}", exc_info=True)
+            # Ensure we disconnect even on error
+            try:
+                await self.disconnect()
+            except Exception as disconnect_error:
+                logger.warning(f"   ⚠️  Error during disconnect after error: {disconnect_error}")
             return []
     
     @with_error_boundary("Failed to send Gmail email")
@@ -224,33 +411,40 @@ class GmailConnector(MailSourceConnector):
             return []
         
         try:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, lambda: self._imap.select("INBOX"))
+            # Use async IMAP
+            await self._imap.select("INBOX")
             
-            # Gmail IMAP search
-            status, messages = await loop.run_in_executor(
-                None,
-                lambda: self._imap.search(None, query)
-            )
+            # Gmail IMAP search (async)
+            result = await self._imap.search(None, query)
+            status, messages = result
             
             if status != "OK":
                 return []
             
-            email_ids = messages[0].split()[:limit]
+            # Decode messages
+            messages_str = messages[0].decode() if isinstance(messages[0], bytes) else str(messages[0])
+            email_ids = messages_str.split()[:limit]
             unified_emails = []
             
             for email_id in email_ids:
                 try:
-                    status, msg_data = await loop.run_in_executor(
-                        None,
-                        lambda eid=email_id: self._imap.fetch(eid, "(RFC822)")
-                    )
+                    email_id_str = email_id.decode() if isinstance(email_id, bytes) else str(email_id)
+                    result = await self._imap.fetch(email_id_str, "(RFC822)")
+                    status, msg_data = result
                     
-                    if status == "OK" and msg_data[0]:
-                        raw_email = msg_data[0][1]
-                        email_message = email.message_from_bytes(raw_email)
-                        unified_email = self._convert_imap_email(email_message, email_id.decode())
-                        unified_emails.append(unified_email)
+                    if status == "OK" and msg_data and len(msg_data) > 0:
+                        # Extract email body from msg_data
+                        raw_email = None
+                        for part in msg_data:
+                            if isinstance(part, tuple) and len(part) >= 2:
+                                if isinstance(part[1], bytes) and b"From:" in part[1]:
+                                    raw_email = part[1]
+                                    break
+                        
+                        if raw_email:
+                            email_message = email.message_from_bytes(raw_email)
+                            unified_email = self._convert_imap_email(email_message, email_id_str)
+                            unified_emails.append(unified_email)
                 except Exception as e:
                     logger.warning(f"Failed to fetch email {email_id}: {e}")
                     continue
@@ -269,11 +463,9 @@ class GmailConnector(MailSourceConnector):
             return []
         
         try:
-            loop = asyncio.get_event_loop()
-            status, folders = await loop.run_in_executor(
-                None,
-                lambda: self._imap.list()
-            )
+            # Use async IMAP
+            result = await self._imap.list()
+            status, folders = result
             
             if status != "OK":
                 return []
@@ -281,7 +473,7 @@ class GmailConnector(MailSourceConnector):
             # Parse folder list
             folder_list = []
             for folder in folders:
-                folder_str = folder.decode()
+                folder_str = folder.decode() if isinstance(folder, bytes) else str(folder)
                 # Parse IMAP folder format
                 parts = folder_str.split(' "/" ')
                 if len(parts) > 1:
@@ -335,20 +527,26 @@ class GmailConnector(MailSourceConnector):
             email_message: Python email.message.Message object
             email_id: Email ID from IMAP
         """
+        logger.debug(f"      🔄 Converting IMAP email (ID: {email_id})...")
+        
         # Decode subject
         subject, encoding = decode_header(email_message["Subject"])[0] if email_message["Subject"] else ("", None)
         if isinstance(subject, bytes):
             subject = subject.decode(encoding or "utf-8")
+        logger.debug(f"         Subject: '{subject[:50]}{'...' if len(subject) > 50 else ''}'")
         
         # Decode from address
         from_header = email_message["From"]
         from_name, from_email = email.utils.parseaddr(from_header)
+        logger.debug(f"         From: {from_name} <{from_email}>")
         
         # Parse date
         date_str = email_message["Date"]
         try:
             timestamp = datetime(*email.utils.parsedate(date_str)[:6])
-        except:
+            logger.debug(f"         Date: {timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        except Exception as e:
+            logger.warning(f"         ⚠️  Failed to parse date '{date_str}': {e}, using current time")
             timestamp = datetime.utcnow()
         
         # Get body
@@ -356,14 +554,18 @@ class GmailConnector(MailSourceConnector):
         body_html = None
         
         if email_message.is_multipart():
+            logger.debug(f"         Email is multipart, extracting body parts...")
             for part in email_message.walk():
                 content_type = part.get_content_type()
                 if content_type == "text/plain":
                     body_text = part.get_payload(decode=True).decode("utf-8", errors="ignore")
+                    logger.debug(f"         Found text/plain body ({len(body_text)} chars)")
                 elif content_type == "text/html":
                     body_html = part.get_payload(decode=True).decode("utf-8", errors="ignore")
+                    logger.debug(f"         Found text/html body ({len(body_html) if body_html else 0} chars)")
         else:
             body_text = email_message.get_payload(decode=True).decode("utf-8", errors="ignore")
+            logger.debug(f"         Email is single part, extracted body ({len(body_text)} chars)")
         
         # Parse recipients
         to_addresses = []
@@ -374,10 +576,21 @@ class GmailConnector(MailSourceConnector):
         for addr in email.utils.getaddresses(email_message.get_all("Cc", [])):
             cc_addresses.append({"email": addr[1], "name": addr[0]})
         
+        logger.debug(f"         To: {len(to_addresses)} recipient(s), Cc: {len(cc_addresses)} recipient(s)")
+        
         # Check for importance/priority
+        logger.debug(f"         Checking importance indicators...")
+        
         # Gmail uses X-Gmail-Labels which may contain "Important"
         gmail_labels = email_message.get("X-Gmail-Labels", "")
         is_important = "Important" in gmail_labels or "\\Important" in gmail_labels
+        if is_important:
+            logger.debug(f"         ✅ IMPORTANT: Found in X-Gmail-Labels: {gmail_labels}")
+        
+        # Check IMAP Important flag
+        if email_message.get("X-IMAP-Important") == "true":
+            is_important = True
+            logger.debug(f"         ✅ IMPORTANT: Found \\Important IMAP flag")
         
         # Also check X-Priority header (1 = high, 3 = normal, 5 = low)
         x_priority = email_message.get("X-Priority", "")
@@ -388,8 +601,10 @@ class GmailConnector(MailSourceConnector):
                 if priority_num == 1:
                     priority_value = EmailPriority.HIGH
                     is_important = True
+                    logger.debug(f"         ✅ HIGH PRIORITY: X-Priority = {priority_num}")
                 elif priority_num == 5:
                     priority_value = EmailPriority.LOW
+                    logger.debug(f"         ℹ️  LOW PRIORITY: X-Priority = {priority_num}")
             except:
                 pass
         
@@ -398,6 +613,12 @@ class GmailConnector(MailSourceConnector):
         if importance_header in ["high", "urgent"]:
             priority_value = EmailPriority.HIGH
             is_important = True
+            logger.debug(f"         ✅ HIGH PRIORITY: Importance header = {importance_header}")
+        
+        if not is_important:
+            logger.debug(f"         ℹ️  Not marked as important (normal priority)")
+        
+        logger.debug(f"         ✅ Conversion complete: Important={is_important}, Priority={priority_value.value}")
         
         return UnifiedEmail(
             id=f"gmail_{email_id}",

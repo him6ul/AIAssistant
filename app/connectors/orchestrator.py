@@ -67,22 +67,50 @@ class AssistantOrchestrator:
         logger.info("Initializing assistant orchestrator...")
         
         all_connectors = []
-        all_connectors.extend(self.registry.get_all_message_connectors().values())
-        all_connectors.extend(self.registry.get_all_mail_connectors().values())
-        all_connectors.extend(self.registry.get_all_note_connectors().values())
+        message_connectors = self.registry.get_all_message_connectors()
+        mail_connectors = self.registry.get_all_mail_connectors()
+        note_connectors = self.registry.get_all_note_connectors()
         
+        logger.info(f"Found {len(message_connectors)} message connector(s), {len(mail_connectors)} mail connector(s), {len(note_connectors)} note connector(s)")
+        
+        all_connectors.extend(message_connectors.values())
+        all_connectors.extend(mail_connectors.values())
+        all_connectors.extend(note_connectors.values())
+        
+        if not all_connectors:
+            logger.warning("No connectors found in registry - initialization may have been called before connectors were registered")
+            return False
+        
+        logger.info(f"Attempting to connect {len(all_connectors)} connector(s)...")
         success_count = 0
         for connector in all_connectors:
             try:
-                if await connector.connect():
+                connector_type = connector.source_type
+                logger.info(f"Connecting {connector_type} connector...")
+                
+                # Check if already connected
+                if hasattr(connector, '_connected') and connector._connected:
+                    logger.info(f"{connector_type} connector already connected, skipping")
                     success_count += 1
-                    logger.info(f"Connected {connector.source_type} connector")
-                else:
-                    logger.warning(f"Failed to connect {connector.source_type} connector")
+                    continue
+                
+                # Connect with timeout
+                import asyncio
+                try:
+                    connected = await asyncio.wait_for(connector.connect(), timeout=30.0)
+                    if connected:
+                        success_count += 1
+                        logger.info(f"✅ Connected {connector_type} connector")
+                    else:
+                        logger.warning(f"⚠️  Failed to connect {connector_type} connector (returned False)")
+                except asyncio.TimeoutError:
+                    logger.error(f"❌ Timeout connecting {connector_type} connector (30s)")
+                except Exception as e:
+                    logger.error(f"❌ Error connecting {connector_type} connector: {e}", exc_info=True)
             except Exception as e:
-                logger.error(f"Error connecting {connector.source_type}: {e}", exc_info=True)
+                logger.error(f"❌ Unexpected error processing connector: {e}", exc_info=True)
         
-        logger.info(f"Initialized {success_count}/{len(all_connectors)} connectors")
+        logger.info(f"Initialized {success_count}/{len(all_connectors)} connector(s)")
         return success_count > 0
     
     async def shutdown(self) -> None:

@@ -2,6 +2,8 @@
 * Integrate with Outlook - should be able to send me reminders for meetings etc. and check and reply emails for me
 * It should retain context of what I am asking.
 * There is a high delay when I say something when it responds.
+* Integrate with Gmail - should be able to send me reminders for meetings etc. and check and reply emails for me
+* Integrate with Gmail - should be able to send me reminders for meetings etc. and check and reply emails for me
 
 --------------------------------
 

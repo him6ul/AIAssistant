@@ -210,31 +210,50 @@ class UnifiedInboxService:
             }
             logger.info(f"   Filtered to {len(connectors)} connector(s) matching source types: {[st.value for st in source_types]}")
         
+        # Process connectors in parallel to avoid one blocking the other
+        import asyncio
+        
+        # Fetch from all connectors in parallel - ULTRA SIMPLE APPROACH
+        logger.info(f"   Fetching from {len(connectors)} connector(s)...")
+        
+        # Just call fetch_emails directly without any wrapper - simplest possible
+        all_results = []
         for source_type, connector in connectors.items():
+            logger.info(f"   📋 Processing {source_type.value} connector...")
             try:
-                logger.info(f"   🔍 Checking {source_type.value} connector...")
-                
                 if not connector.is_connected():
                     logger.warning(f"   ⚠️  {source_type.value} connector is not connected, skipping")
                     continue
                 
-                logger.info(f"   ✅ {source_type.value} is connected, fetching emails (limit={limit}, unread_only={unread_only}, since={since})...")
+                logger.info(f"   ✅ {source_type.value} is connected, calling fetch_emails directly...")
                 fetch_start = datetime.utcnow()
                 
-                emails = await connector.fetch_emails(
-                    limit=limit,
-                    folder=folder,
-                    unread_only=unread_only,
-                    since=since,
+                emails = await asyncio.wait_for(
+                    connector.fetch_emails(
+                        limit=limit,
+                        folder=folder,
+                        unread_only=unread_only,
+                        since=since,
+                    ),
+                    timeout=60.0
                 )
-                
                 fetch_duration = (datetime.utcnow() - fetch_start).total_seconds()
-                all_emails.extend(emails)
                 logger.info(f"   ✅ Fetched {len(emails)} emails from {source_type.value} in {fetch_duration:.2f}s")
-                
-            except Exception as e:
-                logger.error(f"   ❌ Error fetching emails from {source_type.value}: {e}", exc_info=True)
-                # Continue with other connectors - graceful degradation
+                all_results.extend(emails)
+            except asyncio.TimeoutError:
+                logger.error(f"   ❌ Timeout fetching emails from {source_type.value} (60s limit)")
+            except Exception as fetch_error:
+                logger.error(f"   ❌ Error fetching emails from {source_type.value}: {fetch_error}", exc_info=True)
+        
+        results = [all_results]  # Wrap in list to match expected format
+        logger.info(f"   ✅ Fetch completed, got {len(all_results)} total emails")
+        
+        # Collect all emails from all connectors
+        for result in results:
+            if isinstance(result, list):
+                all_emails.extend(result)
+            elif isinstance(result, Exception):
+                logger.error(f"   ❌ Exception in connector fetch: {result}", exc_info=True)
         
         # Sort by timestamp (newest first)
         all_emails.sort(key=lambda e: e.timestamp, reverse=True)

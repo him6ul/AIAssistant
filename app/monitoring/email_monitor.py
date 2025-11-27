@@ -159,21 +159,30 @@ class EmailNotificationMonitor:
         check_start_time = datetime.utcnow()
         since = check_start_time - timedelta(minutes=self.lookback_minutes)
         
+        # Get enabled mail connectors from registry
+        enabled_mail_connectors = self.orchestrator.registry.get_all_mail_connectors()
+        enabled_source_types = list(enabled_mail_connectors.keys())
+        source_names = [st.value.title() for st in enabled_source_types]
+        
         logger.info("=" * 80)
         logger.info(f"📧 EMAIL MONITOR CHECK STARTED at {check_start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
         logger.info(f"   Checking for emails since: {since.strftime('%Y-%m-%d %H:%M:%S UTC')}")
         logger.info(f"   Lookback window: {self.lookback_minutes} minutes")
-        logger.info(f"   Sources to check: Gmail, Outlook")
+        logger.info(f"   Sources to check: {', '.join(source_names) if source_names else 'None (no mail connectors enabled)'}")
         logger.info("-" * 80)
         
+        if not enabled_source_types:
+            logger.warning("⚠️  No mail connectors enabled - skipping email check")
+            return []
+        
         try:
-            # Fetch emails from Gmail and Outlook
+            # Fetch emails from all enabled mail connectors
             # Check both unread and read emails to catch important ones
-            logger.info("🔍 Fetching emails from all configured sources...")
+            logger.info(f"🔍 Fetching emails from {len(enabled_source_types)} configured source(s)...")
             fetch_start = datetime.utcnow()
             
             emails = await self.orchestrator.get_all_emails(
-                source_types=[SourceType.GMAIL, SourceType.OUTLOOK],
+                source_types=enabled_source_types,
                 unread_only=False,  # Check all emails, not just unread
                 limit=50
             )
@@ -378,17 +387,31 @@ class EmailNotificationMonitor:
         # Initialize orchestrator (connectors should already be loaded by main.py)
         # The orchestrator will use the global registry which has connectors registered
         logger.info("🔌 Initializing connectors...")
-        initialized = await self.orchestrator.initialize()
-        if not initialized:
-            logger.warning("⚠️  Email monitor orchestrator initialization returned False - connectors may not be available")
-        else:
-            logger.info("✅ Connectors initialized successfully")
+        
+        # Add timeout to prevent hanging
+        import asyncio
+        try:
+            initialized = await asyncio.wait_for(self.orchestrator.initialize(), timeout=60.0)
+            if not initialized:
+                logger.warning("⚠️  Email monitor orchestrator initialization returned False - connectors may not be available")
+                # Continue anyway - connectors might already be connected from main.py
+            else:
+                logger.info("✅ Connectors initialized successfully")
+        except asyncio.TimeoutError:
+            logger.error("❌ Timeout initializing orchestrator (60s) - continuing anyway")
+            # Continue - connectors might already be connected
+        except Exception as e:
+            logger.error(f"❌ Error initializing orchestrator: {e}", exc_info=True)
+            # Continue - connectors might already be connected
         
         self._running = True
         
         # Run immediately once
         logger.info("▶️  Running initial email check...")
-        await self._check_and_notify()
+        try:
+            await self._check_and_notify()
+        except Exception as e:
+            logger.error(f"❌ Error in initial email check: {e}", exc_info=True)
         
         # Then run periodically
         check_count = 1
