@@ -199,6 +199,21 @@ class EmailNotificationMonitor:
             for source, count in emails_by_source.items():
                 logger.info(f"   - {source}: {count} emails")
             
+            # Log details of ALL fetched emails (before filtering)
+            if emails:
+                logger.info("📋 All fetched emails details:")
+                for idx, email in enumerate(emails[:10], 1):  # Show first 10
+                    sender = email.from_address.get('email', 'Unknown')
+                    sender_name = email.from_address.get('name', '')
+                    if sender_name:
+                        sender_display = f"{sender_name} <{sender}>"
+                    else:
+                        sender_display = sender
+                    logger.info(f"   {idx}. [{email.source_type.value}] '{email.subject}' from {sender_display} at {email.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                    logger.info(f"      ID: {email.id}, Important flag: {email.is_important}, Priority: {email.priority}")
+                if len(emails) > 10:
+                    logger.info(f"   ... and {len(emails) - 10} more emails")
+            
             # Filter emails from the last N minutes
             logger.info(f"⏰ Filtering emails from last {self.lookback_minutes} minutes...")
             recent_emails = [
@@ -413,22 +428,24 @@ class EmailNotificationMonitor:
         except Exception as e:
             logger.error(f"❌ Error in initial email check: {e}", exc_info=True)
         
-        # Then run periodically
+        # Then run periodically - use same pattern as working schedulers
         check_count = 1
         logger.info(f"🔄 Starting periodic check loop (interval: {self.check_interval_seconds}s)")
+        logger.info(f"   Task info: Running in event loop: {asyncio.get_running_loop() is not None}")
         while self._running:
             logger.info(f"⏳ Next check in {self.check_interval_seconds}s (check #{check_count} completed)")
             logger.info(f"   Monitor running: {self._running}, check_count: {check_count}")
             try:
+                # Use simple asyncio.sleep like the working schedulers do
                 logger.info(f"   Sleeping for {self.check_interval_seconds} seconds...")
                 await asyncio.sleep(self.check_interval_seconds)
-                logger.info(f"   ✅ Sleep completed, checking if still running...")
+                logger.info(f"   ✅ Sleep completed at {datetime.utcnow().strftime('%H:%M:%S')} UTC, checking if still running...")
                 if self._running:
                     check_count += 1
                     logger.info(f"🔄 Starting periodic check #{check_count}...")
                     try:
                         await self._check_and_notify()
-                        logger.debug(f"   Periodic check #{check_count} completed")
+                        logger.info(f"   ✅ Periodic check #{check_count} completed")
                     except Exception as e:
                         logger.error(f"❌ Error in periodic check #{check_count}: {e}", exc_info=True)
                         # Continue the loop even if check fails
@@ -436,7 +453,7 @@ class EmailNotificationMonitor:
                     logger.info("   Monitor stopped, exiting loop")
                     break
             except asyncio.CancelledError:
-                logger.info("   Monitor task cancelled")
+                logger.warning("   ⚠️  Monitor task cancelled - this should not happen during normal operation")
                 break
             except Exception as e:
                 logger.error(f"❌ Error in monitor loop: {e}", exc_info=True)

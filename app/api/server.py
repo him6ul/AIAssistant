@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import List, Optional
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 import uvicorn
 
 from app.llm_router import get_llm_router, reset_llm_router
@@ -24,10 +25,66 @@ from app.network import get_network_monitor
 from app.utils.logger import get_logger
 from app.commands.handler import get_command_handler
 import asyncio
+import os
 
 logger = get_logger(__name__)
 
-app = FastAPI(title="AI Personal Assistant API", version="1.0.0")
+# Store background tasks
+_email_monitor_task = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan - startup and shutdown."""
+    # Startup
+    logger.info("🚀 FastAPI lifespan: Starting up...")
+    global _email_monitor_task
+    try:
+        from app.monitoring.email_monitor import EmailNotificationMonitor
+        
+        # Check if Gmail or Outlook are enabled
+        enable_gmail = os.getenv("ENABLE_GMAIL", "false").lower() == "true"
+        enable_outlook = os.getenv("ENABLE_OUTLOOK", "false").lower() == "true"
+        logger.info(f"   Gmail enabled: {enable_gmail}, Outlook enabled: {enable_outlook}")
+        
+        if enable_gmail or enable_outlook:
+            logger.info("Starting email notification monitor from FastAPI lifespan...")
+            email_monitor = EmailNotificationMonitor(
+                check_interval_seconds=300,  # 5 minutes
+                lookback_minutes=5
+            )
+            _email_monitor_task = asyncio.create_task(email_monitor.start())
+            # Add done callback to log if task completes unexpectedly
+            def monitor_done_callback(task):
+                if task.exception():
+                    logger.error(f"Email monitor task failed: {task.exception()}", exc_info=task.exception())
+                else:
+                    logger.warning("Email monitor task completed unexpectedly (should run forever)")
+            _email_monitor_task.add_done_callback(monitor_done_callback)
+            logger.info("✅ Email notification monitor started from FastAPI lifespan")
+        else:
+            logger.info("Email notification monitor skipped (Gmail and Outlook not enabled)")
+    except Exception as e:
+        logger.error(f"Failed to start email monitor in lifespan: {e}", exc_info=True)
+    
+    logger.info("✅ FastAPI lifespan: Startup complete")
+    yield
+    
+    # Shutdown
+    logger.info("🛑 FastAPI lifespan: Shutting down...")
+    if _email_monitor_task and not _email_monitor_task.done():
+        logger.info("Stopping email notification monitor...")
+        _email_monitor_task.cancel()
+        try:
+            await _email_monitor_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("✅ FastAPI lifespan: Shutdown complete")
+
+app = FastAPI(
+    title="AI Personal Assistant API",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 # CORS middleware
 app.add_middleware(

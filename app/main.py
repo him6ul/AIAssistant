@@ -6,6 +6,7 @@ Initializes and starts all services.
 import asyncio
 import os
 import signal
+import threading
 from pathlib import Path
 from dotenv import load_dotenv
 import yaml
@@ -98,13 +99,26 @@ async def initialize_services():
             enable_gmail = os.getenv("ENABLE_GMAIL", "false").lower() == "true"
             enable_outlook = os.getenv("ENABLE_OUTLOOK", "false").lower() == "true"
             
+            # Start email monitor in separate thread with its own event loop
+            # because server.serve() blocks the main event loop
             if enable_gmail or enable_outlook:
+                logger.info("Starting email notification monitor in separate thread...")
                 email_monitor = EmailNotificationMonitor(
                     check_interval_seconds=300,  # 5 minutes
                     lookback_minutes=5
                 )
-                asyncio.create_task(email_monitor.start())
-                logger.info("Email notification monitor started")
+                
+                def run_monitor_in_thread():
+                    """Run monitor in separate thread with its own event loop."""
+                    # Use asyncio.run() which properly manages the event loop lifecycle
+                    try:
+                        asyncio.run(email_monitor.start())
+                    except Exception as e:
+                        logger.error(f"Email monitor thread failed: {e}", exc_info=True)
+                
+                monitor_thread = threading.Thread(target=run_monitor_in_thread, daemon=True)
+                monitor_thread.start()
+                logger.info("Email notification monitor started in separate thread")
             else:
                 logger.info("Email notification monitor skipped (Gmail and Outlook not enabled)")
         except ImportError as e:
@@ -169,8 +183,13 @@ async def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Run server
+    # Run server - ensure background tasks are scheduled first
     logger.info("Starting FastAPI server...")
+    
+    # Give background tasks a moment to start before server blocks
+    await asyncio.sleep(0.1)
+    
+    # Run server (this blocks, but background tasks should run concurrently)
     await run_server()
 
 

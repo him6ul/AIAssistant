@@ -79,8 +79,12 @@ def _fetch_emails_in_process(
                 return
             
             email_ids_str = messages[0].decode('utf-8', errors='ignore') if isinstance(messages[0], bytes) else str(messages[0])
-            email_ids = email_ids_str.split()[:limit]
-            print(f"[PROCESS] Found {len(email_ids)} email IDs", file=sys.stderr, flush=True)
+            email_ids = email_ids_str.split()
+            # Reverse to get newest emails first (IMAP returns oldest first)
+            email_ids.reverse()
+            # Take only the limit
+            email_ids = email_ids[:limit]
+            print(f"[PROCESS] Found {len(email_ids)} email IDs (newest first)", file=sys.stderr, flush=True)
         
         # Fetch emails - extract raw bytes to make them picklable
         emails_data = []
