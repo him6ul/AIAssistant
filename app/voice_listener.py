@@ -309,8 +309,10 @@ class VoiceListener:
         max_recording_frames = 300  # ~10 seconds max (increased for longer commands)
         energy_threshold = 400  # Lowered to catch quieter speech
         
-        # Skip initial frames to avoid any echo
-        skip_initial_frames = 5  # Reduced since no TTS just happened
+        # Skip initial frames to avoid any echo from TTS
+        # Skip more frames in continuous mode since TTS might have just finished
+        skip_initial_frames = 60  # Skip ~2 seconds to avoid TTS echo (increased from 5)
+        logger.debug(f"Skipping first {skip_initial_frames} frames (~{skip_initial_frames * 0.032:.1f}s) to avoid TTS echo...")
         for i in range(skip_initial_frames):
             try:
                 frame = self.audio_stream.read(512, exception_on_overflow=False)
@@ -318,6 +320,7 @@ class VoiceListener:
             except Exception as e:
                 logger.warning(f"Error skipping initial frame {i}: {e}")
                 break
+        logger.debug("Finished skipping initial frames, starting VAD recording...")
         
         # Record with VAD - improved to handle natural pauses in speech
         logger.debug(f"Starting continuous mode VAD: max_frames={max_recording_frames}, energy_threshold={energy_threshold}, max_silence={max_silence_frames}")
@@ -441,8 +444,18 @@ class VoiceListener:
             # Start TTS in background (non-blocking)
             tts_task = loop.run_in_executor(None, self.tts_engine.speak, confirmation)
             
-            # Wait for TTS to complete (background listener will handle stop detection)
+            # Wait for TTS to complete, but check for stop command periodically
+            # Background listener will handle stop detection and call stop_speaking()
             try:
+                # Wait with periodic checks for stop command
+                while not tts_task.done():
+                    if not self._listening:
+                        logger.info("Stop detected during confirmation TTS - interrupting")
+                        self.tts_engine.stop_speaking()
+                        return
+                    await asyncio.sleep(0.1)  # Check every 100ms
+                
+                # Task completed, get result
                 await tts_task
             except Exception as e:
                 logger.warning(f"TTS task interrupted: {e}")
@@ -479,8 +492,18 @@ class VoiceListener:
             # Start TTS in background (non-blocking)
             tts_task = loop.run_in_executor(None, self.tts_engine.speak, content)
             
-            # Wait for TTS to complete (background listener will handle stop detection)
+            # Wait for TTS to complete, but check for stop command periodically
+            # Background listener will handle stop detection and call stop_speaking()
             try:
+                # Wait with periodic checks for stop command
+                while not tts_task.done():
+                    if not self._listening:
+                        logger.info("Stop detected during response TTS - interrupting")
+                        self.tts_engine.stop_speaking()
+                        return
+                    await asyncio.sleep(0.1)  # Check every 100ms
+                
+                # Task completed, get result
                 await tts_task
             except Exception as e:
                 logger.warning(f"TTS task interrupted: {e}")
@@ -491,13 +514,15 @@ class VoiceListener:
             if self.callback:
                 await self.callback(text, content, response)
             
-            # After processing command, enter continuous listening mode
-            # User can give another command without saying wake word again
+            # After processing command, wait additional time before entering continuous listening
+            # This prevents picking up Jarvis's own voice output (echo)
             if self._listening:
+                logger.info("Waiting additional time to avoid TTS echo before resuming listening...")
+                # Wait longer to ensure TTS echo has completely died down
+                await asyncio.sleep(2.0)  # Additional 2 seconds after TTS completes
+                
                 logger.info("Entering continuous listening mode - ready for next command")
                 self._continuous_mode = True
-                # Brief pause after response, then start listening for next command
-                await asyncio.sleep(1.0)  # Give user time to process response
                 # Start recording next command (without wake word)
                 # This will loop back to _process_voice_command if another command is detected
                 try:

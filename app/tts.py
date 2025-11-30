@@ -26,11 +26,6 @@ class TTSEngine:
         voice_id: Optional[str] = None,
         prefer_male: bool = True
     ):
-        # Lock to ensure only one TTS call at a time
-        self._speak_lock = threading.Lock()
-        self._current_speak_process: Optional[subprocess.Popen] = None  # Track current TTS process for interruption
-        # Store rate for use with 'say' command
-        self.rate = rate
         """
         Initialize TTS engine.
         
@@ -40,6 +35,12 @@ class TTSEngine:
             voice_id: Specific voice ID (optional, uses system default if None)
             prefer_male: If True, prefer male voices (default: True)
         """
+        # Lock to ensure only one TTS call at a time
+        self._speak_lock = threading.Lock()
+        self._current_speak_process: Optional[subprocess.Popen] = None  # Track current TTS process for interruption
+        # Store rate for use with 'say' command
+        self.rate = rate
+        
         try:
             self.engine = pyttsx3.init()
             self.engine.setProperty('rate', rate)
@@ -120,48 +121,37 @@ class TTSEngine:
         """
         logger.info("🛑 stop_speaking() called - interrupting TTS")
         
-        # Try to acquire lock, but don't block if TTS is currently speaking
-        lock_acquired = False
-        try:
-            lock_acquired = self._speak_lock.acquire(blocking=False)
-            if not lock_acquired:
-                logger.warning("TTS lock is held, attempting to stop anyway...")
-        except Exception as e:
-            logger.warning(f"Error acquiring TTS lock: {e}")
-        
-        try:
-            # Stop macOS say command if running
-            if self._current_speak_process:
+        # CRITICAL: Stop the process FIRST, even if lock is held
+        # This ensures immediate interruption
+        if self._current_speak_process:
+            try:
+                logger.info("Stopping TTS (interrupting 'say' command) - FORCE KILL")
+                # Force kill immediately for faster response
                 try:
-                    logger.info("Stopping TTS (interrupting 'say' command)")
-                    # First try terminate (graceful)
-                    self._current_speak_process.terminate()
-                    # Give it a moment to terminate gracefully
+                    self._current_speak_process.kill()
+                    self._current_speak_process.wait(timeout=0.1)
+                    logger.info("✅ 'say' command force killed")
+                except subprocess.TimeoutExpired:
+                    # Process didn't die, try again
                     try:
-                        self._current_speak_process.wait(timeout=0.3)
-                        logger.info("✅ 'say' command terminated gracefully")
-                    except subprocess.TimeoutExpired:
-                        # Force kill if it doesn't terminate quickly
-                        logger.warning("'say' command didn't terminate, force killing...")
                         self._current_speak_process.kill()
-                        self._current_speak_process.wait()
-                        logger.info("✅ 'say' command force killed")
+                    except:
+                        pass
                 except Exception as e:
-                    logger.warning(f"Error stopping TTS process: {e}", exc_info=True)
-                finally:
-                    self._current_speak_process = None
-            
-            # Stop pyttsx3 if running
-            if self.engine:
-                try:
-                    logger.info("Stopping pyttsx3 engine...")
-                    self.engine.stop()
-                    logger.info("✅ pyttsx3 engine stopped")
-                except Exception as e:
-                    logger.warning(f"Error stopping pyttsx3: {e}")
-        finally:
-            if lock_acquired:
-                self._speak_lock.release()
+                    logger.warning(f"Error killing TTS process: {e}")
+            except Exception as e:
+                logger.warning(f"Error stopping TTS process: {e}", exc_info=True)
+            finally:
+                self._current_speak_process = None
+        
+        # Stop pyttsx3 if running
+        if self.engine:
+            try:
+                logger.info("Stopping pyttsx3 engine...")
+                self.engine.stop()
+                logger.info("✅ pyttsx3 engine stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping pyttsx3: {e}")
         
         logger.info("✅ stop_speaking() completed")
     
@@ -220,22 +210,56 @@ class TTSEngine:
                             text=True
                         )
                         
+                        # Wait for completion with timeout, but check periodically if process was killed
+                        # Use shorter timeout intervals to allow interruption
+                        max_wait_time = 60
+                        check_interval = 0.1  # Check every 100ms
+                        elapsed = 0
+                        
                         try:
-                            # Wait for completion with timeout
-                            result = self._current_speak_process.wait(timeout=60)
-                            self._current_speak_process = None
+                            while elapsed < max_wait_time:
+                                try:
+                                    # Check if process is still running
+                                    result = self._current_speak_process.poll()
+                                    if result is not None:
+                                        # Process completed
+                                        process_result = result
+                                        self._current_speak_process = None
+                                        
+                                        if process_result == 0:
+                                            logger.info(f"Finished speaking via 'say' command (length: {len(text)} chars)")
+                                            return True
+                                        else:
+                                            logger.warning(f"'say' command exited with code {process_result} (may have been interrupted)")
+                                            return False
+                                    
+                                    # Process still running, wait a bit
+                                    time.sleep(check_interval)
+                                    elapsed += check_interval
+                                    
+                                    # Check if process was killed externally (stop_speaking was called)
+                                    if self._current_speak_process is None:
+                                        logger.info("TTS process was interrupted by stop_speaking()")
+                                        return False
+                                        
+                                except Exception as poll_error:
+                                    logger.warning(f"Error polling process: {poll_error}")
+                                    break
                             
-                            if result == 0:
-                                logger.info(f"Finished speaking via 'say' command (length: {len(text)} chars)")
-                                return True
-                            else:
-                                logger.error(f"'say' command failed with code {result}")
-                                # Fallback to pyttsx3
-                                return self._speak_pyttsx3(text, wait)
-                        except subprocess.TimeoutExpired:
+                            # Timeout reached
                             logger.error("'say' command timed out")
                             if self._current_speak_process:
                                 self._current_speak_process.kill()
+                                self._current_speak_process = None
+                            # Fallback to pyttsx3
+                            return self._speak_pyttsx3(text, wait)
+                        except Exception as wait_error:
+                            logger.warning(f"Error waiting for TTS process: {wait_error}")
+                            if self._current_speak_process:
+                                try:
+                                    self._current_speak_process.kill()
+                                except:
+                                    pass
                                 self._current_speak_process = None
                             # Fallback to pyttsx3
                             return self._speak_pyttsx3(text, wait)
@@ -354,4 +378,3 @@ def get_tts_engine() -> TTSEngine:
             prefer_male=prefer_male
         )
     return _tts_engine
-

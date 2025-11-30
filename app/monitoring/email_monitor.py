@@ -12,7 +12,7 @@ import json
 from app.connectors.orchestrator import AssistantOrchestrator
 from app.connectors.models import UnifiedEmail, SourceType
 from app.llm_router import get_llm_router
-from app.tts import TTSEngine
+from app.tts import get_tts_engine
 from app.utils.localization import get_message
 from app.utils.logger import get_logger
 
@@ -122,8 +122,8 @@ class EmailNotificationMonitor:
         self.orchestrator = AssistantOrchestrator()
         self.importance_checker = EmailImportanceChecker()
         
-        # Initialize TTS
-        self.tts_engine = TTSEngine()
+        # Use global TTS engine instance to avoid multiple voices speaking at once
+        self.tts_engine = get_tts_engine()
         
         # Load notified emails from disk (persist across restarts)
         self._notification_history_file = Path("data/email_notifications.json")
