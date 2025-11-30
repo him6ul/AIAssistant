@@ -4,7 +4,7 @@ Command handler - routes commands to appropriate handlers.
 
 from typing import Optional, List
 from app.commands.types import CommandRequest, CommandResponse, CommandType
-from app.commands.handlers import WeatherHandler, TimeHandler, DateHandler, StopHandler
+from app.commands.handlers import WeatherHandler, TimeHandler, DateHandler, StopHandler, CalendarHandler
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -22,6 +22,7 @@ class CommandHandler:
             WeatherHandler(),
             TimeHandler(),
             DateHandler(),
+            CalendarHandler(),
         ]
     
     async def process(self, text: str) -> CommandResponse:

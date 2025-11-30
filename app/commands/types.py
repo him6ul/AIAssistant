@@ -13,6 +13,7 @@ class CommandType(str, Enum):
     TIME = "time"
     DATE = "date"
     STOP = "stop"
+    CALENDAR = "calendar"
     UNKNOWN = "unknown"
 
 

@@ -10,6 +10,7 @@ import os
 from dotenv import load_dotenv
 from app.commands.types import CommandType, CommandResponse
 from app.utils.logger import get_logger
+from app.connectors.implementations.google_calendar_connector import GoogleCalendarConnector
 
 logger = get_logger(__name__)
 
@@ -252,6 +253,115 @@ class DateHandler:
                 "timestamp": now.isoformat()
             }
         )
+
+
+class CalendarHandler:
+    """Handler for calendar/meeting-related commands."""
+    
+    def __init__(self):
+        """Initialize calendar handler."""
+        self.calendar_connector = None
+        self._connector_initialized = False
+    
+    def _init_connector(self):
+        """Initialize calendar connector if not already done."""
+        if self._connector_initialized:
+            return
+        
+        try:
+            self.calendar_connector = GoogleCalendarConnector()
+            self._connector_initialized = True
+        except Exception as e:
+            logger.warning(f"Failed to initialize Google Calendar connector: {e}")
+    
+    def can_handle(self, text: str) -> bool:
+        """Check if this handler can process the command."""
+        text_lower = text.lower().strip()
+        
+        calendar_keywords = [
+            "meeting", "meetings", "calendar", "event", "events",
+            "appointment", "appointments", "schedule", "scheduled",
+            "do i have", "what meetings", "any meetings", "meetings today",
+            "meetings in google calendar", "google calendar"
+        ]
+        
+        # Check for calendar-related phrases
+        calendar_phrases = [
+            "do i have any meetings",
+            "what meetings do i have",
+            "meetings today",
+            "meetings in google calendar",
+            "do i have meetings today",
+            "any meetings today"
+        ]
+        
+        # Check for phrases first (more specific)
+        for phrase in calendar_phrases:
+            if phrase in text_lower:
+                logger.info(f"Calendar handler matched phrase: '{phrase}' in '{text}'")
+                return True
+        
+        # Then check for keywords
+        matched_keywords = [kw for kw in calendar_keywords if kw in text_lower]
+        if matched_keywords:
+            logger.info(f"Calendar handler matched keywords: {matched_keywords} in '{text}'")
+            return True
+        
+        logger.debug(f"Calendar handler did not match: '{text}'")
+        return False
+    
+    async def handle(self, text: str) -> CommandResponse:
+        """Handle calendar command."""
+        self._init_connector()
+        
+        if not self.calendar_connector:
+            return CommandResponse(
+                handled=True,
+                response="I can't check your calendar right now. Please configure Google Calendar credentials.",
+                command_type=CommandType.CALENDAR
+            )
+        
+        # Connect if not already connected
+        if not self.calendar_connector.is_connected():
+            connected = await self.calendar_connector.connect()
+            if not connected:
+                return CommandResponse(
+                    handled=True,
+                    response="I couldn't connect to your Google Calendar. Please check your credentials.",
+                    command_type=CommandType.CALENDAR
+                )
+        
+        try:
+            # Get remaining meetings for today
+            events = await self.calendar_connector.get_remaining_today_events()
+            
+            if not events:
+                response_text = "You have no remaining meetings today."
+            else:
+                if len(events) == 1:
+                    response_text = f"You have 1 remaining meeting today: {self.calendar_connector.format_event(events[0])}."
+                else:
+                    response_text = f"You have {len(events)} remaining meetings today:\n"
+                    for idx, event in enumerate(events, 1):
+                        response_text += f"{idx}. {self.calendar_connector.format_event(event)}\n"
+                    response_text = response_text.strip()
+            
+            return CommandResponse(
+                handled=True,
+                response=response_text,
+                command_type=CommandType.CALENDAR,
+                data={
+                    "event_count": len(events),
+                    "events": events
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error fetching calendar events: {e}", exc_info=True)
+            return CommandResponse(
+                handled=True,
+                response="I encountered an error while checking your calendar. Please try again later.",
+                command_type=CommandType.CALENDAR
+            )
 
 
 class StopHandler:

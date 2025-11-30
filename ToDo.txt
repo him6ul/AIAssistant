@@ -3,7 +3,7 @@
 * It should retain context of what I am asking.
 * There is a high delay when I say something when it responds.
 * Integrate with Gmail - should be able to send me reminders for meetings etc. and check and reply emails for me
-
+* It does not stop when I ask it to stop
 --------------------------------
 
 Done:
