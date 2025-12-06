@@ -119,26 +119,32 @@ class TTSEngine:
         """
         Stop any ongoing speech immediately.
         """
-        logger.info("🛑 stop_speaking() called - interrupting TTS")
+        logger.info("🛑 stop_speaking() called - interrupting TTS immediately")
         
         # CRITICAL: Stop the process FIRST, even if lock is held
         # This ensures immediate interruption
         if self._current_speak_process:
             try:
                 logger.info("Stopping TTS (interrupting 'say' command) - FORCE KILL")
-                # Force kill immediately for faster response
+                # Force kill immediately for faster response - use SIGKILL for immediate termination
                 try:
                     self._current_speak_process.kill()
-                    self._current_speak_process.wait(timeout=0.1)
-                    logger.info("✅ 'say' command force killed")
-                except subprocess.TimeoutExpired:
-                    # Process didn't die, try again
+                    # Don't wait - just kill and move on
                     try:
-                        self._current_speak_process.kill()
-                    except:
+                        self._current_speak_process.wait(timeout=0.05)
+                    except subprocess.TimeoutExpired:
+                        # Process didn't die fast enough, that's okay - we killed it
                         pass
+                    logger.info("✅ 'say' command killed")
                 except Exception as e:
                     logger.warning(f"Error killing TTS process: {e}")
+                    # Try to kill all 'say' processes as fallback
+                    try:
+                        import subprocess
+                        subprocess.run(['pkill', '-9', '-f', 'say'], timeout=0.5, capture_output=True)
+                        logger.info("✅ Killed all 'say' processes as fallback")
+                    except:
+                        pass
             except Exception as e:
                 logger.warning(f"Error stopping TTS process: {e}", exc_info=True)
             finally:
@@ -152,6 +158,17 @@ class TTSEngine:
                 logger.info("✅ pyttsx3 engine stopped")
             except Exception as e:
                 logger.warning(f"Error stopping pyttsx3: {e}")
+        
+        # Also kill any remaining 'say' processes as a safety measure
+        try:
+            import subprocess
+            result = subprocess.run(['pgrep', '-f', 'say'], capture_output=True, timeout=0.5)
+            if result.returncode == 0:
+                # There are still 'say' processes running, kill them
+                subprocess.run(['pkill', '-9', '-f', 'say'], timeout=0.5, capture_output=True)
+                logger.info("✅ Killed remaining 'say' processes")
+        except:
+            pass
         
         logger.info("✅ stop_speaking() completed")
     

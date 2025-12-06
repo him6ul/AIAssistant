@@ -403,6 +403,24 @@ class VoiceListener:
             if len(text) < 3:
                 logger.warning(f"⚠️ Transcription too short: '{text}' - may be incomplete")
             
+            # Strip "Jarvis" or wake word from the beginning of the command
+            # This helps when users say "Jarvis, what is the weather" - we want to process "what is the weather"
+            text_lower = text.lower().strip()
+            wake_word_lower = self.wake_word.lower()
+            
+            # Remove wake word if it appears at the start
+            if text_lower.startswith(wake_word_lower):
+                # Remove wake word and any following punctuation/whitespace
+                text = text[len(self.wake_word):].strip()
+                # Remove leading comma, colon, or other punctuation
+                text = text.lstrip(',:;. ')
+                logger.info(f"Removed wake word '{self.wake_word}' from command: '{text}'")
+            elif text_lower.startswith("jarvis"):
+                # Also handle "Jarvis" specifically (case-insensitive)
+                text = text[6:].strip()  # Remove "Jarvis" (6 chars)
+                text = text.lstrip(',:;. ')
+                logger.info(f"Removed 'Jarvis' from command: '{text}'")
+            
             logger.info(f"✅ Transcribed ({len(text)} chars): '{text}'")
             
             # Check for stop command first (before any other processing)
@@ -438,6 +456,17 @@ class VoiceListener:
                 # If transcription is very short, ask for clarification
                 confirmation = f"I heard: {text}. Is that correct?"
             logger.info(f"Confirming command: {confirmation}")
+            
+            # Check for stop command AGAIN before starting confirmation TTS
+            # (in case user said stop while we were processing)
+            text_lower_check = text.lower().strip()
+            stop_keywords_check = get_stop_words()
+            is_stop_now = any(keyword in text_lower_check for keyword in stop_keywords_check)
+            if is_stop_now:
+                logger.info("🛑 Stop command detected before confirmation TTS - handling immediately")
+                await self._handle_stop_command()
+                return
+            
             # Run TTS in executor to avoid blocking async event loop
             # But also continue listening for stop commands in parallel
             loop = asyncio.get_event_loop()
@@ -445,16 +474,18 @@ class VoiceListener:
             # Start TTS in background (non-blocking)
             tts_task = loop.run_in_executor(None, self.tts_engine.speak, confirmation)
             
-            # Wait for TTS to complete, but check for stop command periodically
+            # Wait for TTS to complete, but check for stop command frequently
             # Background listener will handle stop detection and call stop_speaking()
             try:
-                # Wait with periodic checks for stop command
+                # Wait with frequent checks for stop command (check every 50ms for faster response)
                 while not tts_task.done():
                     if not self._listening:
-                        logger.info("Stop detected during confirmation TTS - interrupting")
+                        logger.info("Stop detected during confirmation TTS - interrupting immediately")
                         self.tts_engine.stop_speaking()
+                        # Wait a moment for TTS to actually stop
+                        await asyncio.sleep(0.1)
                         return
-                    await asyncio.sleep(0.1)  # Check every 100ms
+                    await asyncio.sleep(0.05)  # Check every 50ms for faster response
                 
                 # Task completed, get result
                 await tts_task
@@ -493,16 +524,18 @@ class VoiceListener:
             # Start TTS in background (non-blocking)
             tts_task = loop.run_in_executor(None, self.tts_engine.speak, content)
             
-            # Wait for TTS to complete, but check for stop command periodically
+            # Wait for TTS to complete, but check for stop command frequently
             # Background listener will handle stop detection and call stop_speaking()
             try:
-                # Wait with periodic checks for stop command
+                # Wait with frequent checks for stop command (check every 50ms for faster response)
                 while not tts_task.done():
                     if not self._listening:
-                        logger.info("Stop detected during response TTS - interrupting")
+                        logger.info("Stop detected during response TTS - interrupting immediately")
                         self.tts_engine.stop_speaking()
+                        # Wait a moment for TTS to actually stop
+                        await asyncio.sleep(0.1)
                         return
-                    await asyncio.sleep(0.1)  # Check every 100ms
+                    await asyncio.sleep(0.05)  # Check every 50ms for faster response
                 
                 # Task completed, get result
                 await tts_task
@@ -608,14 +641,14 @@ class VoiceListener:
                         max_recording_frames = 300  # ~10 seconds max (increased for longer commands)
                         energy_threshold = 400  # Lowered to catch quieter speech
                         
-                        # Brief wait for audio system to settle (reduced from 0.8s)
-                        logger.debug("Brief pause (0.3s) for audio system to settle...")
-                        await asyncio.sleep(0.3)
+                        # Brief wait for audio system to settle - increased to avoid TTS echo
+                        logger.debug("Brief pause (0.5s) for audio system to settle...")
+                        await asyncio.sleep(0.5)
                         
-                        # Skip fewer initial frames - just enough to avoid TTS echo
-                        # But start recording immediately so we don't miss user's speech
-                        skip_initial_frames = 10  # Skip first ~0.3 seconds (reduced from 20)
-                        logger.debug(f"Skipping first {skip_initial_frames} frames to avoid TTS echo...")
+                        # Skip more initial frames to avoid TTS echo from "Yes?" response
+                        # This is critical to avoid picking up Jarvis's own voice
+                        skip_initial_frames = 30  # Skip first ~1 second to avoid TTS echo
+                        logger.debug(f"Skipping first {skip_initial_frames} frames (~1s) to avoid TTS echo...")
                         for i in range(skip_initial_frames):
                             try:
                                 frame = self.audio_stream.read(512, exception_on_overflow=False)
@@ -653,11 +686,12 @@ class VoiceListener:
                                             break
                                     else:
                                         # No speech detected yet - wait for user to start speaking
-                                        # Record initial frames to catch the start of speech
+                                        # Don't record silence frames - only record when speech is detected
+                                        # This prevents recording background noise or TTS echo
                                         silence_frames += 1
-                                        if silence_frames < 30:  # Wait up to ~1 second for speech to start
-                                            audio_frames.append(frame)
-                                        # If too much silence at start without speech, might be background noise
+                                        if silence_frames >= 60:  # ~2 seconds of silence without speech
+                                            logger.info(f"No speech detected after {silence_frames} frames, stopping recording")
+                                            break
                                 
                                 await asyncio.sleep(0.032)  # ~31 frames per second
                             except Exception as e:

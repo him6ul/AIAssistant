@@ -43,15 +43,21 @@ class CommandHandler:
                 command_type=CommandType.UNKNOWN
             )
         
+        # Strip "Jarvis" from beginning if present (backup, in case voice_listener didn't)
+        text_lower = text.lower().strip()
+        if text_lower.startswith("jarvis"):
+            text = text[6:].strip().lstrip(',:;. ')
+            logger.debug(f"Stripped 'Jarvis' from command: '{text}'")
+        
         # Try each handler
-        logger.debug(f"Processing command: '{text}'")
+        logger.info(f"Processing command: '{text}'")
         for handler in self.handlers:
-            logger.debug(f"Checking if {handler.__class__.__name__} can handle: '{text}'")
+            logger.info(f"Checking if {handler.__class__.__name__} can handle: '{text}'")
             if handler.can_handle(text):
                 logger.info(f"✅ Command handled by {handler.__class__.__name__}")
                 return await handler.handle(text)
             else:
-                logger.debug(f"❌ {handler.__class__.__name__} cannot handle: '{text}'")
+                logger.info(f"❌ {handler.__class__.__name__} cannot handle: '{text}'")
         
         # No handler matched
         logger.info(f"⚠️  No handler matched command: '{text}'")

@@ -57,7 +57,13 @@ class WeatherHandler:
     
     def can_handle(self, text: str) -> bool:
         """Check if this handler can process the command."""
+        # Strip "Jarvis" or wake word from beginning if present
         text_lower = text.lower().strip()
+        if text_lower.startswith("jarvis"):
+            text_lower = text_lower[6:].strip().lstrip(',:;. ')
+        if text_lower.startswith("what are the"):
+            # Handle partial transcriptions like "what are the..." which might be "what is the weather"
+            text_lower = text_lower.replace("what are the", "what is the", 1)
         
         # Expanded weather keywords and phrases
         weather_keywords = [
@@ -67,7 +73,7 @@ class WeatherHandler:
             "weather today", "current weather", "weather now", "weather report"
         ]
         
-        # Check for weather-related phrases
+        # Check for weather-related phrases (including partial matches)
         weather_phrases = [
             "what is the weather",
             "what's the weather",
@@ -75,7 +81,10 @@ class WeatherHandler:
             "weather outside",
             "weather today",
             "current weather",
-            "weather now"
+            "weather now",
+            "what are the weather",  # Handle transcription errors
+            "what is weather",  # Handle missing "the"
+            "what weather"  # Very partial
         ]
         
         # Check for phrases first (more specific)
@@ -84,10 +93,20 @@ class WeatherHandler:
                 logger.info(f"Weather handler matched phrase: '{phrase}' in '{text}'")
                 return True
         
-        # Then check for keywords
-        matched_keywords = [kw for kw in weather_keywords if kw in text_lower]
-        if matched_keywords:
-            logger.info(f"Weather handler matched keywords: {matched_keywords} in '{text}'")
+        # Then check for keywords - be very lenient: if "weather" appears anywhere, it's likely a weather query
+        if "weather" in text_lower:
+            matched_keywords = [kw for kw in weather_keywords if kw in text_lower]
+            logger.info(f"Weather handler: found 'weather' keyword, matched_keywords={matched_keywords} in '{text}'")
+            if matched_keywords:
+                logger.info(f"Weather handler matched keywords: {matched_keywords} in '{text}'")
+                return True
+            # Even if no other keywords match, if "weather" is present, it's likely a weather query
+            logger.info(f"Weather handler matched 'weather' keyword in '{text}'")
+            return True
+        
+        # Also check if "outside" appears with temperature-related words
+        if "outside" in text_lower and ("temp" in text_lower or "temperature" in text_lower):
+            logger.info(f"Weather handler matched 'outside' with temp/temperature keywords in '{text}'")
             return True
         
         logger.debug(f"Weather handler did not match: '{text}'")

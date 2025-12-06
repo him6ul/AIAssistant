@@ -142,17 +142,26 @@ async def run_server():
     """
     Run the FastAPI server.
     """
+    logger = get_logger(__name__)
     host = os.getenv("SERVER_HOST", "localhost")
     port = int(os.getenv("SERVER_PORT", "8000"))
     
+    logger.info(f"Creating uvicorn config for {host}:{port}...")
     config_obj = uvicorn.Config(
         app,
         host=host,
         port=port,
-        log_level="info"
+        log_level="info",
+        log_config=None  # Use default logging, don't override
     )
+    logger.info("Creating uvicorn Server object...")
     server = uvicorn.Server(config_obj)
-    await server.serve()
+    logger.info(f"About to call server.serve() on {host}:{port}...")
+    try:
+        await server.serve()
+    except Exception as e:
+        logger.error(f"Error in server.serve(): {e}", exc_info=True)
+        raise
 
 
 async def main():
@@ -190,7 +199,12 @@ async def main():
     await asyncio.sleep(0.1)
     
     # Run server (this blocks, but background tasks should run concurrently)
-    await run_server()
+    logger.info("About to call run_server()...")
+    try:
+        await run_server()
+    except Exception as e:
+        logger.error(f"Error in run_server(): {e}", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":

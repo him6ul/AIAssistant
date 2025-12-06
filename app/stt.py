@@ -171,7 +171,8 @@ class STTEngine:
                             
                             transcript_params = {
                                 "model": model_name,
-                                "file": audio_file
+                                "file": audio_file,
+                                "prompt": "This is a voice command to a personal assistant named Jarvis. The user is asking questions or giving commands. Common commands include: what is the weather, what time is it, do I have meetings, stop, etc. Transcribe exactly what the user says."
                             }
                             if lang_to_try:
                                 transcript_params["language"] = lang_to_try
