@@ -44,6 +44,7 @@ def get_stop_words() -> List[str]:
         "stop the assistant",
         "stop jarvis",
         "jarvis stop",
+        "jarvis, stop",
         "shut down",
         "exit",
         "quit",
@@ -181,24 +182,24 @@ class VoiceListener:
         except Exception as e:
             logger.warning(f"Error stopping TTS: {e}", exc_info=True)
         
-        # Small delay to ensure TTS actually stops
-        await asyncio.sleep(0.2)
+        # Brief delay to ensure TTS actually stops and audio system settles
+        await asyncio.sleep(0.3)
         
         # Get user name from environment or use default
         user_name = os.getenv("USER_NAME", "Himanshu")
         goodbye_message = f"Goodbye {user_name}"
         
-        # Try to speak goodbye message (but don't wait too long)
+        # Speak goodbye message immediately (this should be the only thing speaking now)
         try:
             loop = asyncio.get_event_loop()
             logger.info(f"Speaking goodbye message: {goodbye_message}")
-            # Use asyncio.wait_for to prevent hanging
+            # Use asyncio.wait_for to prevent hanging, but give enough time to speak
             result = await asyncio.wait_for(
                 loop.run_in_executor(None, self.tts_engine.speak, goodbye_message, True),
-                timeout=3.0
+                timeout=5.0  # Increased timeout to ensure goodbye is spoken
             )
             if result:
-                logger.info("Goodbye message spoken successfully")
+                logger.info("✅ Goodbye message spoken successfully")
         except asyncio.TimeoutError:
             logger.warning("Goodbye message timed out - proceeding with shutdown")
         except Exception as e:
@@ -586,10 +587,10 @@ class VoiceListener:
                         logger.info("Wake word detected!")
                         self._continuous_mode = False  # Reset continuous mode when wake word is detected
                         
-                        # Speak response and WAIT for it to complete
+                        # Speak brief response and WAIT for it to complete
                         loop = asyncio.get_event_loop()
                         logger.info("Speaking wake word response...")
-                        await loop.run_in_executor(None, self.tts_engine.speak, "Yes, how can I help?", True)
+                        await loop.run_in_executor(None, self.tts_engine.speak, "Yes?", True)
                         logger.info("Wake word response completed")
                         
                         # Start recording immediately - we'll use VAD to detect when user actually speaks

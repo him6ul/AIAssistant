@@ -35,7 +35,7 @@ cat > "$PLIST_FILE" << EOF
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <string>cd "${PROJECT_DIR}" && source venv/bin/activate && export VOICE_ENABLED=true && python -m app.main</string>
+        <string>cd "${PROJECT_DIR}" && source venv/bin/activate && export VOICE_ENABLED=true && export WAKE_WORD=jarvis && export USER_NAME=Himanshu && python -m app.main</string>
     </array>
     
     <key>WorkingDirectory</key>
@@ -59,6 +59,10 @@ cat > "$PLIST_FILE" << EOF
         <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
         <key>VOICE_ENABLED</key>
         <string>true</string>
+        <key>WAKE_WORD</key>
+        <string>jarvis</string>
+        <key>USER_NAME</key>
+        <string>Himanshu</string>
     </dict>
 </dict>
 </plist>
